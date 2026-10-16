@@ -17,7 +17,7 @@ export function schedule(id, days = {}) {
 
 /* Mounts a card. `schedules` is what schedule/list returns, `states` and
    `entities` go into hass. Returns the card, its window and the sent WS messages. */
-export async function mount(config, { schedules = [], states = {}, entities = {}, devices = {}, areas = {} } = {}) {
+export async function mount(config, { schedules = [], states = {}, entities = {}, devices = {}, areas = {}, language = "en" } = {}) {
   const dom = new JSDOM("<body></body>", { runScripts: "outside-only", pretendToBeVisual: true });
   const w = dom.window;
   w.matchMedia = () => ({ matches: true });   // reduced motion: no animations
@@ -28,8 +28,8 @@ export async function mount(config, { schedules = [], states = {}, entities = {}
   const sent = [];
   const hass = {
     states, entities, devices, areas,
-    language: "en",
-    locale: { language: "en", time_format: "24", number_format: "comma_decimal" },
+    language,
+    locale: { language, time_format: "24", number_format: "comma_decimal" },
     callWS: async (msg) => {
       sent.push(msg);
       return msg.type === "schedule/list" ? schedules : {};
@@ -59,7 +59,7 @@ export function setSlider(card, w, index, value) {
 }
 
 export async function save(card, sent) {
-  button(card, "Zapisz zmiany").click();
+  button(card, "Save changes").click();
   await tick();
   // Plain objects: values created inside jsdom have another realm's prototypes.
   return JSON.parse(JSON.stringify(sent.filter((m) => m.type === "schedule/update").at(-1)));
