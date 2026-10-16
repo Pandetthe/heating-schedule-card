@@ -1,0 +1,49 @@
+{
+  "days_short": [
+    "Mon",
+    "Tue",
+    "Wed",
+    "Thu",
+    "Fri",
+    "Sat",
+    "Sun"
+  ],
+  "days_full": [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday"
+  ],
+  "every_day": "Every day",
+  "blocks": {
+    "zero": "No blocks",
+    "one": "{n} block",
+    "other": "{n} blocks"
+  },
+  "no_blocks": "No blocks - the value outside the schedule applies all day",
+  "days_with_blocks": "Days with these blocks",
+  "hour": "Hour",
+  "minutes": "Minutes",
+  "add_block": "Add block",
+  "remove": "Remove",
+  "copy": "Copy",
+  "paste": "Paste",
+  "save": "Save changes",
+  "discard": "Discard",
+  "saving": "Saving…",
+  "saved": "Saved",
+  "unsaved": "You have unsaved changes",
+  "fix_errors": "Fix the errors to save",
+  "loading": "Loading…",
+  "ends_before_start": "{day}: block {from}-{to} ends before it starts",
+  "overlap": "{day}: blocks {from1}-{to1} and {from2}-{to2} overlap",
+  "no_free_gap": "No free time left in the day - remove or shorten a block.",
+  "save_failed": "Saving failed: {error}",
+  "not_found": "Schedule “{id}” not found",
+  "entity_required": "Required: entity pointing to a schedule.* entity",
+  "card_name": "Heating schedule",
+  "card_description": "Edit schedule blocks and their temperatures with a slider"
+}

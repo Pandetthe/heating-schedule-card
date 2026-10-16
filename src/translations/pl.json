@@ -1,0 +1,51 @@
+{
+  "days_short": [
+    "pn",
+    "wt",
+    "śr",
+    "cz",
+    "pt",
+    "sb",
+    "nd"
+  ],
+  "days_full": [
+    "Poniedziałek",
+    "Wtorek",
+    "Środa",
+    "Czwartek",
+    "Piątek",
+    "Sobota",
+    "Niedziela"
+  ],
+  "every_day": "codziennie",
+  "blocks": {
+    "zero": "brak bloków",
+    "one": "{n} blok",
+    "few": "{n} bloki",
+    "many": "{n} bloków",
+    "other": "{n} bloku"
+  },
+  "no_blocks": "brak bloków - obowiązuje podtrzymanie przez całą dobę",
+  "days_with_blocks": "Dni z tymi blokami",
+  "hour": "Godzina",
+  "minutes": "Minuty",
+  "add_block": "Dodaj blok",
+  "remove": "Usuń",
+  "copy": "Kopiuj",
+  "paste": "Wklej",
+  "save": "Zapisz zmiany",
+  "discard": "Odrzuć",
+  "saving": "Zapisywanie…",
+  "saved": "Zapisano",
+  "unsaved": "Masz niezapisane zmiany",
+  "fix_errors": "Popraw błędy, żeby zapisać",
+  "loading": "Wczytywanie…",
+  "ends_before_start": "{day}: blok {from}-{to} kończy się przed startem",
+  "overlap": "{day}: bloki {from1}-{to1} i {from2}-{to2} nachodzą na siebie",
+  "no_free_gap": "Brak wolnego miejsca w dobie - usuń lub skróć istniejący blok.",
+  "save_failed": "Zapis nieudany: {error}",
+  "not_found": "Nie znaleziono harmonogramu „{id}”",
+  "entity_required": "Wymagane: entity wskazujące na encję schedule.*",
+  "card_name": "Harmonogram grzania",
+  "card_description": "Edycja bloków i temperatur harmonogramu suwakiem"
+}

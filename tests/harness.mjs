@@ -2,7 +2,8 @@
 import { JSDOM } from "jsdom";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("../heating-schedule-card.js", import.meta.url), "utf8");
+// The built bundle (npm test runs the build first), i.e. exactly what users install.
+const source = readFileSync(new URL("../dist/heating-schedule-card.js", import.meta.url), "utf8");
 
 export const tick = () => new Promise((r) => setTimeout(r, 0));
 
@@ -23,6 +24,7 @@ export async function mount(config, { schedules = [], states = {}, entities = {}
   w.matchMedia = () => ({ matches: true });   // reduced motion: no animations
   w.Element.prototype.getAnimations = () => [];
   w.console.info = () => {};
+  // A module script would need a URL; the bundle has no imports or exports, so eval works.
   w.eval(source);
 
   const sent = [];

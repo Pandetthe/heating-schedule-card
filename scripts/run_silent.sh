@@ -5,7 +5,7 @@
 #
 # Usage:
 #   source scripts/run_silent.sh
-#   run_silent "Syntax" "node --check heating-schedule-card.js"
+#   run_silent "Build" "npm run build"
 #
 # Set VERBOSE=1 to see full command output.
 

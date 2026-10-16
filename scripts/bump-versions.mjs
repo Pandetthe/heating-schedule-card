@@ -1,15 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const rootDir = path.resolve(__dirname, '..');
-const cardPath = path.join(rootDir, 'heating-schedule-card.js');
-
-// The version lives in the console banner the card prints when it loads.
-const VERSION_PATTERN = /(%c heating-schedule-card %c )([^ "]+)( ")/;
+const packagePath = path.join(rootDir, 'package.json');
 
 function parseVersion(v) {
     return v.split('.').map(n => parseInt(n, 10) || 0);
@@ -25,12 +23,6 @@ function compareVersions(v1, v2) {
         if (valA < valB) return -1;
     }
     return 0;
-}
-
-function getCurrentVersion(source) {
-    const match = source.match(VERSION_PATTERN);
-    if (!match) throw new Error(`No version banner found in ${cardPath}`);
-    return match[2];
 }
 
 function getNextCalVer(currentMax) {
@@ -56,18 +48,23 @@ function getNextCalVer(currentMax) {
     return next;
 }
 
-const source = fs.readFileSync(cardPath, 'utf8');
+const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
 let version = process.argv[2];
 
 if (!version || !/^\d{4}\.\d{1,2}\.\d+$/.test(version)) {
-    version = getNextCalVer(getCurrentVersion(source));
+    version = getNextCalVer(pkg.version);
 }
 
-console.log(`Setting card version to: ${version}`);
-fs.writeFileSync(cardPath, source.replace(VERSION_PATTERN, `$1${version}$3`));
+console.log(`Setting the version to: ${version}`);
+
+if (pkg.version !== version) {
+    execSync(`npm version ${version} --no-git-tag-version`, { cwd: rootDir, stdio: 'inherit' });
+} else {
+    console.log(`Version is already ${version}, skipping npm version.`);
+}
 
 if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(process.env.GITHUB_OUTPUT, `new_version=${version}\n`);
 }
 
-console.log(`Successfully set the card version to ${version}`);
+console.log(`Successfully set the version to ${version}`);

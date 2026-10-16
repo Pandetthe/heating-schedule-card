@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Build output (attached to releases, not committed)
+dist/
+
 # IDEs and Editors
 .vscode/
 .idea/
