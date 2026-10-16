@@ -21,6 +21,7 @@ scripts/check.sh          # syntax check, JSON validation, tests
 - Renders only after loading and after user actions, never on every `hass` update: a re-render would interrupt a slider drag. Value changes patch the existing DOM (`_refreshState`) instead of calling `_render()`, so focus and animations survive.
 - Uses HA's own elements (`ha-card`, `ha-button`, `ha-icon-button`, `ha-slider`) when they are registered, with plain HTML fallbacks. Time and number formats follow the HA user profile (`hass.locale`), not the browser.
 - The copy/paste clipboard is shared by every card on the page (module-level state).
+- UI texts live in `TRANSLATIONS` (`en`, `pl`); add every new key to both. Plural forms go through `Intl.PluralRules`.
 
 ## Key constraints
 
