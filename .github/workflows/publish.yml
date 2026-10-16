@@ -29,6 +29,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Install dependencies
+        run: npm ci
+
       - name: Set Git Identity
         run: |
           git config --global user.name "github-actions[bot]"
@@ -56,7 +59,7 @@ jobs:
 
           TAG="v$VERSION"
 
-          git add heating-schedule-card.js
+          git add package.json package-lock.json
           git commit -m "chore(release): $VERSION [skip ci]" || echo "Nothing to commit."
           git tag "$TAG"
           git push origin main --tags
@@ -76,6 +79,16 @@ jobs:
           ref: ${{ needs.bump.outputs.tag }}
           fetch-depth: 0
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+
       - name: Build Changelog
         id: build_changelog
         uses: mikepenz/release-changelog-builder-action@v5
@@ -91,4 +104,4 @@ jobs:
         with:
           tag_name: ${{ needs.bump.outputs.tag }}
           body: ${{ steps.build_changelog.outputs.changelog }}
-          files: heating-schedule-card.js
+          files: dist/heating-schedule-card.js

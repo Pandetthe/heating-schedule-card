@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "heating-schedule-card.js"
+      - "src/**"
       - "scripts/**"
       - ".github/workflows/**"
   pull_request:
