@@ -14,6 +14,10 @@ offers a raw YAML field for it. This card gives each block time fields and a sli
 so a heating plan stays in plain schedule helpers instead of a separate integration's
 storage, and your own automations decide what to do with it.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Heating Schedule Card with Mon–Fri and Sat–Sun groups" width="420">
+</p>
+
 ## Features
 
 - Every day as a collapsible list of blocks with start/end times and a value slider.
