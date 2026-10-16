@@ -41,7 +41,7 @@ Think about the pattern type being requested:
 ## Pattern Examples: [Pattern Type]
 
 ### Pattern: [Descriptive Name]
-**Found in**: `heating-schedule-card.js:12-45`
+**Found in**: `src/heating-schedule-card.js:12-45`
 **Used for**: [brief description]
 
 ```js

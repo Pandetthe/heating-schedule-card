@@ -11,6 +11,7 @@
       "Bash(scripts/check.sh)",
       "Bash(./scripts/check.sh)",
       "Bash(npm test)",
+      "Bash(npm run build)",
       "Bash(scripts/spec_metadata.sh)",
       "Bash(./scripts/spec_metadata.sh)"
     ]

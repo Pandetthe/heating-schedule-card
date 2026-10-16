@@ -65,14 +65,14 @@ You are a specialist at understanding HOW code works. Your job is to analyze imp
 [2-3 sentence summary of how it works]
 
 ### Entry Points
-- `heating-schedule-card.js:45` - `setConfig` / `set hass`
+- `src/heating-schedule-card.js:45` - `setConfig` / `set hass`
 
 ### Core Implementation
 
-#### 1. Loading (`heating-schedule-card.js:...`)
+#### 1. Loading (`src/heating-schedule-card.js:...`)
 - What it reads from HA and how
 
-#### 2. Editing and saving (`heating-schedule-card.js:...`)
+#### 2. Editing and saving (`src/heating-schedule-card.js:...`)
 - Step-by-step logic
 
 ### Data Flow

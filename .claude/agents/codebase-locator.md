@@ -18,7 +18,7 @@ You are a specialist at finding WHERE code lives in a codebase. Your job is to l
 1. **Find Files by Topic/Feature**
    - Search for files containing relevant keywords
    - Look for directory patterns and naming conventions
-   - Check common locations (repo root, `scripts/`, `tests/`, `.github/`)
+   - Check common locations (`src/`, `tests/`, `scripts/`, `.github/`)
 
 2. **Categorize Findings**
    - Implementation files (core logic)
@@ -34,7 +34,10 @@ You are a specialist at finding WHERE code lives in a codebase. Your job is to l
 ## Search Strategy
 
 ### Repository Layout
-- **Card**: `heating-schedule-card.js` - the whole Lovelace card (no build step); helpers at the top, `HeatingScheduleCard` class below
+- **Card**: `src/heating-schedule-card.js` - the `HeatingScheduleCard` class (entry point)
+- **Modules**: `src/` - `i18n.js`, `format.js`, `time-field.js`, `ha-elements.js`, `motion.js`, `clipboard.js`, `styles.js`
+- **Translations**: `src/translations/<lang>.json`
+- **Build**: `scripts/build.mjs` (esbuild) -> `dist/heating-schedule-card.js` (gitignored)
 - **Tests**: `tests/` - Node test runner (`*.test.mjs`)
 - **Scripts**: `scripts/` - `check.sh`, `bump-versions.mjs`, helpers
 - **CI and releases**: `.github/workflows/`, `.github/release-changelog-config.json`
@@ -51,13 +54,14 @@ You are a specialist at finding WHERE code lives in a codebase. Your job is to l
 ## File Locations for [Feature/Topic]
 
 ### Card
-- `heating-schedule-card.js` - `_methodName` (rendering), `helperName` (helper)
+- `src/heating-schedule-card.js` - `_methodName` (rendering)
+- `src/time-field.js` - `helperName` (helper)
 
 ### Tests
 - `tests/feature.test.mjs`
 
 ### Configuration
-- `hacs.json`
+- `hacs.json`, `src/translations/en.json`
 ```
 
 ## Important Guidelines

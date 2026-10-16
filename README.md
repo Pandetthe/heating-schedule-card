@@ -95,12 +95,18 @@ actions:
 
 ## Development
 
-The card is a single JavaScript file with no build step and no runtime dependencies.
-Tests run it in [jsdom](https://github.com/jsdom/jsdom) against a fake Home Assistant:
+The source lives in `src/` and is bundled with [esbuild](https://esbuild.github.io/)
+into a single file, `dist/heating-schedule-card.js`, with no runtime dependencies.
+Tests run the bundle in [jsdom](https://github.com/jsdom/jsdom) against a fake Home
+Assistant:
 
 ```sh
-scripts/check.sh
+npm ci
+scripts/check.sh    # build + tests
 ```
+
+Translations are JSON files in `src/translations/`; a new language is one file plus
+a line in `src/i18n.js`.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/); releases
 use CalVer and are published by the `Publish` workflow.
