@@ -1,0 +1,55 @@
+{
+  "categories": [
+    {
+      "title": "## 🚀 Features",
+      "labels": ["feature", "feat"]
+    },
+    {
+      "title": "## 🐛 Bug Fixes",
+      "labels": ["bug", "fix"]
+    },
+    {
+      "title": "## 🧱 Structural Changes",
+      "labels": ["refactor", "build", "ci"]
+    },
+    {
+      "title": "## 🧪 Tests",
+      "labels": ["test"]
+    },
+    {
+      "title": "## 📝 Documentation",
+      "labels": ["documentation", "docs"]
+    },
+    {
+      "title": "## 🧹 Chores",
+      "labels": ["chore", "style"]
+    },
+    {
+      "title": "## ⚡ Performance",
+      "labels": ["performance", "perf"]
+    }
+  ],
+  "ignore_labels": ["ignore"],
+  "sort": "ASC",
+  "template": "#{{CHANGELOG}}**Full Changelog**: #{{RELEASE_DIFF}}",
+  "pr_template": "- #{{TITLE}}",
+  "commit_template": "- #{{TITLE}}",
+  "transformers": [
+    {
+      "pattern": "^(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore)(?:\\([^)]*\\))?!?:\\s*",
+      "target": ""
+    }
+  ],
+  "label_extractor": [
+    {
+      "pattern": "^.*\\[skip ci\\]$",
+      "target": "ignore",
+      "on_property": "title"
+    },
+    {
+      "pattern": "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore)(?:\\((.*)\\))?!?: (.*)$",
+      "target": "$1",
+      "on_property": "title"
+    }
+  ]
+}

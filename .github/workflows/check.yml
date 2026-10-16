@@ -1,0 +1,29 @@
+name: "Check"
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "heating-schedule-card.js"
+      - "tests/**"
+      - "scripts/**"
+      - "*.json"
+      - ".github/workflows/check.yml"
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Syntax, JSON & Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run scripts/check.sh
+        run: scripts/check.sh

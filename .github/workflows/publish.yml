@@ -1,0 +1,94 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: publication-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    name: Bump and Tag
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+      tagged: ${{ steps.tag_check.outputs.tagged }}
+      tag: ${{ steps.tag_check.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set Git Identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check
+        run: scripts/check.sh
+
+      - name: Bump Version
+        id: bump
+        run: node scripts/bump-versions.mjs
+
+      - name: Commit, Push and Tag
+        id: tag_check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.bump.outputs.new_version }}"
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: bump step did not produce new_version. Check scripts/bump-versions.mjs outputs."
+            exit 1
+          fi
+
+          TAG="v$VERSION"
+
+          git add heating-schedule-card.js
+          git commit -m "chore(release): $VERSION [skip ci]" || echo "Nothing to commit."
+          git tag "$TAG"
+          git push origin main --tags
+
+          echo "tagged=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Create GitHub Release
+    needs: bump
+    if: needs.bump.outputs.tagged == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Build Changelog
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          configuration: ".github/release-changelog-config.json"
+          toTag: ${{ needs.bump.outputs.tag }}
+          mode: "COMMIT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.bump.outputs.tag }}
+          body: ${{ steps.build_changelog.outputs.changelog }}
+          files: heating-schedule-card.js
