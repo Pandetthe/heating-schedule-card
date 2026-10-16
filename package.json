@@ -1,6 +1,6 @@
 {
   "name": "heating-schedule-card",
-  "version": "1.16.1",
+  "version": "2026.10.0",
   "private": true,
   "type": "module",
   "description": "Home Assistant card for editing schedule helper blocks and a value stored in each.",
