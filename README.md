@@ -1,6 +1,6 @@
 [![License](https://img.shields.io/github/license/Pandetthe/heating-schedule-card?label=License&color=%230b0&style=flat-square)](https://github.com/Pandetthe/heating-schedule-card/blob/main/LICENSE)
 [![Release](https://img.shields.io/github/v/release/Pandetthe/heating-schedule-card?label=Release&style=flat-square&color=blue)](https://github.com/Pandetthe/heating-schedule-card/releases)
-[![Check](https://img.shields.io/github/actions/workflow/status/Pandetthe/heating-schedule-card/check.yml?label=Check&style=flat-square&logo=githubactions)](https://github.com/Pandetthe/heating-schedule-card/actions/workflows/check.yml)
+[![Security Scan](https://img.shields.io/github/actions/workflow/status/Pandetthe/heating-schedule-card/security.yml?label=Security%20Scan&style=flat-square&logo=githubactions)](https://github.com/Pandetthe/heating-schedule-card/actions/workflows/security.yml)
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange?style=flat-square)](https://hacs.xyz)
 
 # Heating Schedule Card
