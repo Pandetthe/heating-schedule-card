@@ -1,12 +1,77 @@
 /* heating-schedule-card - edit heating schedule temperatures with a slider.
    Reads and writes `schedule` helpers over the HA websocket. */
 
-const DAYS = [
-  ["monday", "pn", "Poniedziałek"], ["tuesday", "wt", "Wtorek"],
-  ["wednesday", "śr", "Środa"], ["thursday", "cz", "Czwartek"],
-  ["friday", "pt", "Piątek"], ["saturday", "sb", "Sobota"],
-  ["sunday", "nd", "Niedziela"],
-];
+const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+/* UI texts. {name} placeholders are filled by format(); `blocks` has plural
+   forms picked with Intl.PluralRules. A language missing here falls back to English. */
+const TRANSLATIONS = {
+  en: {
+    days_short: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    days_full: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    every_day: "Every day",
+    blocks: { zero: "No blocks", one: "{n} block", other: "{n} blocks" },
+    no_blocks: "No blocks - the value outside the schedule applies all day",
+    days_with_blocks: "Days with these blocks",
+    hour: "Hour",
+    minutes: "Minutes",
+    add_block: "Add block",
+    remove: "Remove",
+    copy: "Copy",
+    paste: "Paste",
+    save: "Save changes",
+    discard: "Discard",
+    saving: "Saving…",
+    saved: "Saved",
+    unsaved: "You have unsaved changes",
+    fix_errors: "Fix the errors to save",
+    loading: "Loading…",
+    ends_before_start: "{day}: block {from}-{to} ends before it starts",
+    overlap: "{day}: blocks {from1}-{to1} and {from2}-{to2} overlap",
+    no_free_gap: "No free time left in the day - remove or shorten a block.",
+    save_failed: "Saving failed: {error}",
+    not_found: "Schedule \u201c{id}\u201d not found",
+    entity_required: "Required: entity pointing to a schedule.* entity",
+    card_name: "Heating schedule",
+    card_description: "Edit schedule blocks and their temperatures with a slider",
+  },
+  pl: {
+    days_short: ["pn", "wt", "śr", "cz", "pt", "sb", "nd"],
+    days_full: ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota", "Niedziela"],
+    every_day: "codziennie",
+    blocks: { zero: "brak bloków", one: "{n} blok", few: "{n} bloki", many: "{n} bloków", other: "{n} bloku" },
+    no_blocks: "brak bloków - obowiązuje podtrzymanie przez całą dobę",
+    days_with_blocks: "Dni z tymi blokami",
+    hour: "Godzina",
+    minutes: "Minuty",
+    add_block: "Dodaj blok",
+    remove: "Usuń",
+    copy: "Kopiuj",
+    paste: "Wklej",
+    save: "Zapisz zmiany",
+    discard: "Odrzuć",
+    saving: "Zapisywanie…",
+    saved: "Zapisano",
+    unsaved: "Masz niezapisane zmiany",
+    fix_errors: "Popraw błędy, żeby zapisać",
+    loading: "Wczytywanie…",
+    ends_before_start: "{day}: blok {from}-{to} kończy się przed startem",
+    overlap: "{day}: bloki {from1}-{to1} i {from2}-{to2} nachodzą na siebie",
+    no_free_gap: "Brak wolnego miejsca w dobie - usuń lub skróć istniejący blok.",
+    save_failed: "Zapis nieudany: {error}",
+    not_found: "Nie znaleziono harmonogramu \u201e{id}\u201d",
+    entity_required: "Wymagane: entity wskazujące na encję schedule.*",
+    card_name: "Harmonogram grzania",
+    card_description: "Edycja bloków i temperatur harmonogramu suwakiem",
+  },
+};
+
+/* "pl-PL" -> "pl"; languages without translations -> "en". */
+function pickLanguage(language) {
+  const base = String(language || "").toLowerCase().split("-")[0];
+  return TRANSLATIONS[base] ? base : "en";
+}
+const format = (text, params = {}) => text.replace(/\{(\w+)\}/g, (m, k) => params[k] ?? m);
 
 const hhmm = (s) => (s || "00:00:00").slice(0, 5);
 const withSeconds = (s) => (s.length === 5 ? s + ":00" : s);
@@ -101,7 +166,7 @@ function numberFormatter(hass) {
    the value, AM/PM only in 12 h mode. onChange fires only when focus leaves the
    whole control - re-rendering the card while moving from hours to minutes would
    lose focus. */
-function timeField(value, h12, onChange) {
+function timeField(value, h12, labels, onChange) {
   let [h24, min] = hhmm(value).split(":").map(Number);
   const el = document.createElement("span");
   el.className = "time";
@@ -116,7 +181,7 @@ function timeField(value, h12, onChange) {
     i.addEventListener("focus", () => i.select());
     return i;
   };
-  const hourField = field("Godzina"), minuteField = field("Minuty");
+  const hourField = field(labels.hour), minuteField = field(labels.minutes);
   const colon = document.createElement("span");
   colon.className = "colon";
   colon.textContent = ":";
@@ -238,7 +303,7 @@ class HeatingScheduleCard extends HTMLElement {
 
   setConfig(config) {
     if (!config || !config.entity || !config.entity.startsWith("schedule.")) {
-      throw new Error("Wymagane: entity wskazujące na encję schedule.*");
+      throw new Error(TRANSLATIONS[pickLanguage(config?.language || navigator.language)].entity_required);
     }
     const options = {};
     for (const [key, value] of Object.entries(config)) options[LEGACY_OPTIONS[key] || key] = value;
@@ -252,7 +317,7 @@ class HeatingScheduleCard extends HTMLElement {
     this._saving = false;
     // Which days are expanded. Only today by default, so the card does not
     // spread over all seven days at once.
-    this._expanded = new Set([DAYS[(new Date().getDay() + 6) % 7][0]]);
+    this._expanded = new Set([DAYS[(new Date().getDay() + 6) % 7]]);
   }
 
   set hass(hass) {
@@ -271,6 +336,24 @@ class HeatingScheduleCard extends HTMLElement {
   static getStubConfig(hass) {
     const entity = Object.keys(hass?.states || {}).find((e) => e.startsWith("schedule.")) || "schedule.heating";
     return { entity };
+  }
+
+  _language() {
+    return pickLanguage(this._config?.language || this._hass?.locale?.language
+      || this._hass?.language || navigator.language);
+  }
+
+  /* Translated text; keys missing in a language fall back to English. */
+  _t(key, params) {
+    const text = TRANSLATIONS[this._language()][key] ?? TRANSLATIONS.en[key];
+    return typeof text === "string" ? format(text, params) : text;
+  }
+
+  _blockCount(n) {
+    const forms = this._t("blocks");
+    if (n === 0) return forms.zero;
+    const form = forms[new Intl.PluralRules(this._language()).select(n)] ?? forms.other;
+    return format(form, { n });
   }
 
   /* Area of an entity: its own, otherwise its device's. */
@@ -319,9 +402,9 @@ class HeatingScheduleCard extends HTMLElement {
     try {
       const list = await this._hass.callWS({ type: "schedule/list" });
       const s = list.find((x) => x.id === this._scheduleId);
-      if (!s) throw new Error(`Nie znaleziono harmonogramu „${this._scheduleId}”`);
+      if (!s) throw new Error(this._t("not_found", { id: this._scheduleId }));
       const days = {};
-      for (const [key] of DAYS) {
+      for (const key of DAYS) {
         days[key] = (s[key] || []).map((b) => ({
           from: hhmm(b.from),
           to: hhmm(b.to),
@@ -346,11 +429,11 @@ class HeatingScheduleCard extends HTMLElement {
      does not reshuffle groups mid-edit; days move between groups with chips
      (_toggleDay). */
   _initialLayout() {
-    if (!this._config.group_days) return DAYS.map(([k]) => [k]);
+    if (!this._config.group_days) return DAYS.map((k) => [k]);
     const sig = (d) =>
       JSON.stringify(this._data.days[d].map((b) => [b.from, b.to, b.value]));
     const bySig = new Map();
-    for (const [k] of DAYS) {
+    for (const k of DAYS) {
       const s = sig(k);
       if (!bySig.has(s)) bySig.set(s, []);
       bySig.get(s).push(k);
@@ -361,35 +444,35 @@ class HeatingScheduleCard extends HTMLElement {
   /* Blocks of every day in comparable form (sorted, without helper fields) -
      to check whether anything really changed. */
   _signature() {
-    return JSON.stringify(DAYS.map(([k]) => [...this._data.days[k]]
+    return JSON.stringify(DAYS.map((k) => [...this._data.days[k]]
       .sort((a, b) => toMinutes(a.from) - toMinutes(b.from))
       .map((b) => [b.from, b.to, Number(b.value)])));
   }
 
   _groups() {
-    const index = (k) => DAYS.findIndex(([d]) => d === k);
+    const index = (k) => DAYS.indexOf(k);
     return this._layout
       .map((days) => [...days].sort((a, b) => index(a) - index(b)))
       .sort((a, b) => index(a[0]) - index(b[0]))
       .map((days) => ({
         days,
-        short: days.map((k) => DAYS[index(k)][1]),
-        full: this._config.group_days ? null : DAYS[index(days[0])][2],
+        full: this._config.group_days ? null : this._t("days_full")[index(days[0])],
       }));
   }
 
   /* A run of days as "a–b" (two days too: "sb–nd"), commas only between
-     scattered pieces: "pn–wt, cz–pt", "pn, śr, pt"; the whole week = "codziennie". */
+     scattered pieces: "Mon–Tue, Thu–Fri", "Mon, Wed, Fri"; the whole week = "Every day". */
   _label(g) {
     if (g.full) return g.full;
-    if (g.days.length === 7) return "codziennie";
-    const idx = g.days.map((k) => DAYS.findIndex(([d]) => d === k));
+    if (g.days.length === 7) return this._t("every_day");
+    const short = this._t("days_short");
+    const idx = g.days.map((k) => DAYS.indexOf(k));
     const parts = [];
     for (let i = 0; i < idx.length; ) {
       let j = i;
       while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1) j++;
       const len = j - i + 1;
-      parts.push(len >= 2 ? `${DAYS[idx[i]][1]}–${DAYS[idx[j]][1]}` : DAYS[idx[i]][1]);
+      parts.push(len >= 2 ? `${short[idx[i]]}–${short[idx[j]]}` : short[idx[i]]);
       i = j + 1;
     }
     return parts.join(", ");
@@ -421,17 +504,19 @@ class HeatingScheduleCard extends HTMLElement {
 
   _validationErrors() {
     const errors = [];
-    for (const [key, short] of DAYS) {
+    DAYS.forEach((key, d) => {
+      const day = this._t("days_short")[d];
       const blocks = [...this._data.days[key]].sort(
         (x, y) => toMinutes(x.from) - toMinutes(y.from)
       );
       for (let i = 0; i < blocks.length; i++) {
         if (toMinutes(blocks[i].to) <= toMinutes(blocks[i].from))
-          errors.push(`${short}: blok ${blocks[i].from}-${blocks[i].to} kończy się przed startem`);
+          errors.push(this._t("ends_before_start", { day, from: blocks[i].from, to: blocks[i].to }));
         if (i > 0 && toMinutes(blocks[i].from) < toMinutes(blocks[i - 1].to))
-          errors.push(`${short}: bloki ${blocks[i - 1].from}-${blocks[i - 1].to} i ${blocks[i].from}-${blocks[i].to} nachodzą na siebie`);
+          errors.push(this._t("overlap", { day, from1: blocks[i - 1].from, to1: blocks[i - 1].to,
+            from2: blocks[i].from, to2: blocks[i].to }));
       }
-    }
+    });
     return errors;
   }
 
@@ -492,16 +577,16 @@ class HeatingScheduleCard extends HTMLElement {
     barSlot.style.cssText = "";
     barSlot.innerHTML = `<div class="save-bar${canSave ? " changed" : ""}">
         <span class="status">${
-          this._saving ? "Zapisywanie…"
-          : errors.length ? "Popraw błędy, żeby zapisać"
-          : this._dirty ? "Masz niezapisane zmiany"
-          : "Zapisano"
+          this._saving ? this._t("saving")
+          : errors.length ? this._t("fix_errors")
+          : this._dirty ? this._t("unsaved")
+          : this._t("saved")
         }</span>
         <span class="actions">${this._dirty && !this._saving ? `<span class="slot-discard"></span>` : ""}${this._dirty || this._saving ? `<span class="slot-save"></span>` : ""}</span>
       </div>`;
     const saveSlot = barSlot.querySelector(".slot-save");
     if (saveSlot) {
-      const el = haButton("Zapisz zmiany", { primary: true });
+      const el = haButton(this._t("save"), { primary: true });
       const disabled = !this._dirty || errors.length > 0 || this._saving;
       el.disabled = disabled;
       if (disabled) el.setAttribute("disabled", "");
@@ -510,7 +595,7 @@ class HeatingScheduleCard extends HTMLElement {
     }
     const discardSlot = barSlot.querySelector(".slot-discard");
     if (discardSlot) {
-      const el = haButton("Odrzuć");
+      const el = haButton(this._t("discard"));
       el.addEventListener("click", () => this._discard());
       discardSlot.replaceWith(el);
     }
@@ -525,14 +610,14 @@ class HeatingScheduleCard extends HTMLElement {
     if (wasVisible && barSlot) barSlot.getAnimations().forEach((a) => a.finish());
   }
 
-  /* "1 blok · 23,0 °C" in the group header. */
+  /* "1 block · 23.0 °C" in the group header. */
   _summary(g) {
     const fmt = numberFormatter(this._hass);
     const { unit } = this._config;
     const blocks = this._data.days[g.days[0]];
     const t = blocks.map((b) => Number(b.value));
     const n = blocks.length;
-    const count = n === 0 ? "brak bloków" : n === 1 ? "1 blok" : n < 5 ? `${n} bloki` : `${n} bloków`;
+    const count = this._blockCount(n);
     if (!n) return count;
     const lo = Math.min(...t), hi = Math.max(...t);
     return `${count} · ${lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`} ${unit}`;
@@ -575,7 +660,7 @@ class HeatingScheduleCard extends HTMLElement {
   _add(group) {
     const gap = this._freeGap(this._data.days[group.days[0]]);
     if (!gap) {
-      this._error = "Brak wolnego miejsca w dobie - usuń lub skróć istniejący blok.";
+      this._error = this._t("no_free_gap");
       this._render();
       return;
     }
@@ -637,7 +722,7 @@ class HeatingScheduleCard extends HTMLElement {
         name: this._data.name,
         icon: this._data.icon,
       };
-      for (const [key] of DAYS) {
+      for (const key of DAYS) {
         msg[key] = [...this._data.days[key]]
           .sort((a, b) => toMinutes(a.from) - toMinutes(b.from))
           .map((b) => ({
@@ -664,7 +749,7 @@ class HeatingScheduleCard extends HTMLElement {
       }, 2000);
       return;
     } catch (e) {
-      this._error = `Zapis nieudany: ${e.message || e}`;
+      this._error = this._t("save_failed", { error: e.message || e });
     }
     this._saving = false;
     this._render();
@@ -792,7 +877,7 @@ class HeatingScheduleCard extends HTMLElement {
       return;
     }
     if (!this._data) {
-      this._body.innerHTML = `<div class="content status">Wczytywanie…</div>`;
+      this._body.innerHTML = `<div class="content status">${this._t("loading")}</div>`;
       return;
     }
     // "Unsaved changes" only when the data differs from what HA has saved - toggling
@@ -828,16 +913,17 @@ class HeatingScheduleCard extends HTMLElement {
         <div class="group-body"><div class="group-inner">`;
       if (this._config.group_days) {
         // Day chips: which days use these blocks.
-        html += `<div class="chips" role="group" aria-label="Dni z tymi blokami">${DAYS.map(([k, short, full]) => {
+        const [short, full] = [this._t("days_short"), this._t("days_full")];
+        html += `<div class="chips" role="group" aria-label="${this._t("days_with_blocks")}">${DAYS.map((k, d) => {
           const on = g.days.includes(k);
           const only = on && g.days.length === 1;
           return `<button class="chip${on ? " on" : ""}" data-g="${gi}" data-d="${k}" aria-pressed="${on}"
-            aria-label="${full}"${only ? " disabled" : ""}>${short}</button>`;
+            aria-label="${full[d]}"${only ? " disabled" : ""}>${short[d]}</button>`;
         }).join("")}</div>`;
       }
 
       if (!n) {
-        html += `<div class="empty">brak bloków - obowiązuje podtrzymanie przez całą dobę</div>`;
+        html += `<div class="empty">${this._t("no_blocks")}</div>`;
       }
       blocks.forEach((b, bi) => {
         const isNewRow = this._newBlock && this._newBlock.day === g.days[0] && this._newBlock.from === b.from;
@@ -886,11 +972,12 @@ class HeatingScheduleCard extends HTMLElement {
     });
     // Time fields - text, in the 12/24 h format from the HA profile.
     const h12 = uses12h(this._hass);
+    const labels = { hour: this._t("hour"), minutes: this._t("minutes") };
     [["slot-from", "from"], ["slot-to", "to"]].forEach(([cls, field]) => {
       this._body.querySelectorAll(`.${cls}`).forEach((slot) => {
         const gi = +slot.dataset.g, bi = +slot.dataset.b;
         const block = this._data.days[groups[gi].days[0]][bi];
-        const el = timeField(block[field], h12, (v) => this._change(groups[gi], bi, field, v));
+        const el = timeField(block[field], h12, labels, (v) => this._change(groups[gi], bi, field, v));
         slot.replaceWith(el);
       });
     });
@@ -898,7 +985,7 @@ class HeatingScheduleCard extends HTMLElement {
     // Removing a block - ha-icon-button with a close icon.
     this._body.querySelectorAll(".slot-remove").forEach((slot) => {
       const gi = +slot.dataset.g, bi = +slot.dataset.b;
-      const el = haIconButton("mdi:close", "Usuń");
+      const el = haIconButton("mdi:close", this._t("remove"));
       el.classList.add("remove");
       el.addEventListener("click", () => {
         const row = el.closest(".row");
@@ -937,14 +1024,14 @@ class HeatingScheduleCard extends HTMLElement {
     this._body.querySelectorAll(".slot-copy").forEach((slot) => {
       const gi = +slot.dataset.g;
       const isSource = this._isClipboardSource(groups[gi]);
-      const el = haIconButton("mdi:content-copy", "Kopiuj");
+      const el = haIconButton("mdi:content-copy", this._t("copy"));
       if (isSource) el.classList.add("active");
       el.addEventListener("click", () => this._copy(groups[gi]));
       slot.replaceWith(el);
     });
     this._body.querySelectorAll(".slot-paste").forEach((slot) => {
       const gi = +slot.dataset.g;
-      const el = haIconButton("mdi:content-paste", "Wklej");
+      const el = haIconButton("mdi:content-paste", this._t("paste"));
       el.addEventListener("click", () => this._paste(groups[gi]));
       slot.replaceWith(el);
     });
@@ -952,7 +1039,7 @@ class HeatingScheduleCard extends HTMLElement {
     // Adding a block.
     this._body.querySelectorAll(".slot-add").forEach((slot) => {
       const gi = +slot.dataset.g;
-      const el = haButton("Dodaj blok", { icon: "mdi:plus" });
+      const el = haButton(this._t("add_block"), { icon: "mdi:plus" });
       el.addEventListener("click", () => this._add(groups[gi]));
       slot.replaceWith(el);
     });
@@ -969,9 +1056,10 @@ class HeatingScheduleCard extends HTMLElement {
 
 customElements.define("heating-schedule-card", HeatingScheduleCard);
 window.customCards = window.customCards || [];
+const pickerTexts = TRANSLATIONS[pickLanguage(navigator.language)];
 window.customCards.push({
   type: "heating-schedule-card",
-  name: "Harmonogram grzania",
-  description: "Edycja bloków i temperatur harmonogramu suwakiem",
+  name: pickerTexts.card_name,
+  description: pickerTexts.card_description,
 });
 console.info("%c heating-schedule-card %c 1.16.1 ", "background:#0C6675;color:#fff", "background:#444;color:#fff");
