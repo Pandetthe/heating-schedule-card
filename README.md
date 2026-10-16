@@ -114,7 +114,3 @@ a line in `src/i18n.js`.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/); releases
 use CalVer and are published by the `Publish` workflow.
-
-## License
-
-[MIT](LICENSE)
