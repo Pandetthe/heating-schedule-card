@@ -1,0 +1,73 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const rootDir = path.resolve(__dirname, '..');
+const cardPath = path.join(rootDir, 'heating-schedule-card.js');
+
+// The version lives in the console banner the card prints when it loads.
+const VERSION_PATTERN = /(%c heating-schedule-card %c )([^ "]+)( ")/;
+
+function parseVersion(v) {
+    return v.split('.').map(n => parseInt(n, 10) || 0);
+}
+
+function compareVersions(v1, v2) {
+    const a = parseVersion(v1);
+    const b = parseVersion(v2);
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        const valA = a[i] ?? 0;
+        const valB = b[i] ?? 0;
+        if (valA > valB) return 1;
+        if (valA < valB) return -1;
+    }
+    return 0;
+}
+
+function getCurrentVersion(source) {
+    const match = source.match(VERSION_PATTERN);
+    if (!match) throw new Error(`No version banner found in ${cardPath}`);
+    return match[2];
+}
+
+function getNextCalVer(currentMax) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+
+    let next = `${year}.${month}.0`;
+
+    if (currentMax) {
+        const parts = parseVersion(currentMax);
+        const lastYear = parts[0];
+        const lastMonth = parts[1];
+        const lastPatch = parts[2] ?? 0;
+
+        if (lastYear === year && lastMonth === month) {
+            next = `${year}.${month}.${lastPatch + 1}`;
+        } else if (compareVersions(currentMax, next) >= 0) {
+            next = `${parts[0]}.${parts[1]}.${(parts[2] ?? 0) + 1}`;
+        }
+    }
+
+    return next;
+}
+
+const source = fs.readFileSync(cardPath, 'utf8');
+let version = process.argv[2];
+
+if (!version || !/^\d{4}\.\d{1,2}\.\d+$/.test(version)) {
+    version = getNextCalVer(getCurrentVersion(source));
+}
+
+console.log(`Setting card version to: ${version}`);
+fs.writeFileSync(cardPath, source.replace(VERSION_PATTERN, `$1${version}$3`));
+
+if (process.env.GITHUB_OUTPUT) {
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `new_version=${version}\n`);
+}
+
+console.log(`Successfully set the card version to ${version}`);
