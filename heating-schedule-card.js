@@ -1,7 +1,7 @@
-/* heating-schedule-card - edycja temperatur w harmonogramach grzania suwakiem.
-   Czyta i zapisuje pomocniki `schedule` przez websocket HA. */
+/* heating-schedule-card - edit heating schedule temperatures with a slider.
+   Reads and writes `schedule` helpers over the HA websocket. */
 
-const DNI = [
+const DAYS = [
   ["monday", "pn", "Poniedziałek"], ["tuesday", "wt", "Wtorek"],
   ["wednesday", "śr", "Środa"], ["thursday", "cz", "Czwartek"],
   ["friday", "pt", "Piątek"], ["saturday", "sb", "Sobota"],
@@ -9,162 +9,162 @@ const DNI = [
 ];
 
 const hhmm = (s) => (s || "00:00:00").slice(0, 5);
-const pelna = (s) => (s.length === 5 ? s + ":00" : s);
-const naMinuty = (s) => {
+const withSeconds = (s) => (s.length === 5 ? s + ":00" : s);
+const toMinutes = (s) => {
   const [h, m] = hhmm(s).split(":").map(Number);
   return h * 60 + m;
 };
 
-/* Wybiera pierwszy zarejestrowany komponent z listy preferencji.
-   Dzieki temu karta korzysta z natywnych elementow HA tam, gdzie sa dostepne,
-   a na starszych/nowszych wersjach schodzi do prostszego wariantu zamiast sie wysypac. */
-const dostepny = (...nazwy) => nazwy.find((n) => customElements.get(n)) || null;
+/* Picks the first registered element from a list of preferences.
+   The card uses native HA elements where they exist and falls back to a simpler
+   variant on older/newer versions instead of breaking. */
+const firstDefined = (...names) => names.find((n) => customElements.get(n)) || null;
 
-function przyciskHA(tekst, { glowny = false, ikona = null } = {}) {
-  const tag = dostepny("ha-button", "mwc-button");
+function haButton(text, { primary = false, icon = null } = {}) {
+  const tag = firstDefined("ha-button", "mwc-button");
   if (tag) {
     const el = document.createElement(tag);
-    // Atrybuty ustawiamy dla obu rodzin komponentow - nieznane sa ignorowane,
-    // wiec przycisk wychodzi wypelniony niezaleznie od wersji frontendu HA.
-    if (glowny) {
-      el.setAttribute("unelevated", "");        // mwc-button: wypelniony
+    // Attributes for both element families are set - unknown ones are ignored,
+    // so the button comes out filled whatever the HA frontend version.
+    if (primary) {
+      el.setAttribute("unelevated", "");        // mwc-button: filled
       el.setAttribute("raised", "");
       el.setAttribute("appearance", "filled");  // ha-button (Material 3)
       el.setAttribute("variant", "brand");
     } else {
-      // Drugorzedne akcje w HA sa "ghost" - plaskie, bez obrysu.
+      // Secondary actions in HA are "ghost" - flat, no outline.
       el.setAttribute("appearance", "plain");
       el.setAttribute("variant", "brand");
     }
-    el.textContent = tekst;
-    if (ikona) {
+    el.textContent = text;
+    if (icon) {
       const i = document.createElement("ha-icon");
-      i.setAttribute("icon", ikona);
+      i.setAttribute("icon", icon);
       i.slot = "icon";
       el.prepend(i);
     }
     return el;
   }
   const el = document.createElement("button");
-  el.className = glowny ? "zapasowy glowny" : "zapasowy";
-  el.textContent = tekst;
+  el.className = primary ? "fallback primary" : "fallback";
+  el.textContent = text;
   return el;
 }
 
-function ikonaHA(icon, etykieta) {
-  const tag = dostepny("ha-icon-button");
+function haIconButton(icon, label) {
+  const tag = firstDefined("ha-icon-button");
   if (tag) {
     const el = document.createElement(tag);
-    // ha-icon-button sam pokazuje etykiete jako podpowiedz, jak w calym HA.
-    el.setAttribute("label", etykieta);
+    // ha-icon-button shows the label as a tooltip itself, like everywhere in HA.
+    el.setAttribute("label", label);
     const i = document.createElement("ha-icon");
     i.setAttribute("icon", icon);
     el.appendChild(i);
     return el;
   }
   const el = document.createElement("button");
-  el.className = "zapasowy ikonka";
-  el.title = etykieta;
-  el.setAttribute("aria-label", etykieta);
-  el.textContent = "\u2715";
+  el.className = "fallback icon-only";
+  el.title = label;
+  el.setAttribute("aria-label", label);
+  el.textContent = "✕";
   return el;
 }
 
-/* Format 12/24 h jak w profilu HA (hass.locale.time_format), a nie jak w
-   przegladarce - natywny input type=time bierze format z jezyka przegladarki. */
-function zegar12(hass) {
+/* 12/24 h format from the HA profile (hass.locale.time_format), not from the
+   browser - a native input type=time takes its format from the browser language. */
+function uses12h(hass) {
   const l = (hass && hass.locale) || {};
   if (l.time_format === "12") return true;
   if (l.time_format === "24") return false;
-  const jezyk = l.time_format === "system" ? undefined : (l.language || hass?.language);
-  return !!new Intl.DateTimeFormat(jezyk, { hour: "numeric" }).resolvedOptions().hour12;
+  const locale = l.time_format === "system" ? undefined : (l.language || hass?.language);
+  return !!new Intl.DateTimeFormat(locale, { hour: "numeric" }).resolvedOptions().hour12;
 }
 
-const dwa = (n) => String(n).padStart(2, "0");
+const pad2 = (n) => String(n).padStart(2, "0");
 
-/* Liczby jak w HA (hass.locale.number_format), np. "20,0" po polsku - tak samo
-   jak wartosci suwakow input_number obok karty. */
-const JEZYK_FORMATU = { comma_decimal: "en-US", decimal_comma: "de", space_comma: "fr" };
-function formatLiczby(hass) {
+/* Numbers formatted like in HA (hass.locale.number_format), e.g. "20,0" in Polish -
+   the same as the input_number sliders next to the card. */
+const NUMBER_FORMAT_LOCALE = { comma_decimal: "en-US", decimal_comma: "de", space_comma: "fr" };
+function numberFormatter(hass) {
   const l = (hass && hass.locale) || {};
-  const jezyk = l.number_format === "system" ? undefined
-    : JEZYK_FORMATU[l.number_format] || l.language || hass?.language;
-  const f = new Intl.NumberFormat(jezyk, {
+  const locale = l.number_format === "system" ? undefined
+    : NUMBER_FORMAT_LOCALE[l.number_format] || l.language || hass?.language;
+  const f = new Intl.NumberFormat(locale, {
     minimumFractionDigits: 1, maximumFractionDigits: 1,
     useGrouping: l.number_format !== "none",
   });
   return (n) => f.format(Number(n));
 }
 
-/* Pole czasu na wzor ha-time-input z HA (ten komponent nie jest dostepny dla
-   kart wlasnych): osobne pola godzin i minut, tylko cyfry, strzalki zmieniaja
-   wartosc, AM/PM tylko w trybie 12 h. Zmiana trafia do naZmiane dopiero, gdy
-   fokus opusci cala kontrolke - przerysowanie karty w trakcie przechodzenia
-   z godzin do minut zgubiloby fokus. */
-function polCzasu(wartosc, h12, naZmiane) {
-  let [h24, min] = hhmm(wartosc).split(":").map(Number);
+/* Time field modelled on HA's ha-time-input (that element is not available to
+   custom cards): separate hour and minute fields, digits only, arrow keys change
+   the value, AM/PM only in 12 h mode. onChange fires only when focus leaves the
+   whole control - re-rendering the card while moving from hours to minutes would
+   lose focus. */
+function timeField(value, h12, onChange) {
+  let [h24, min] = hhmm(value).split(":").map(Number);
   const el = document.createElement("span");
-  el.className = "czas";
+  el.className = "time";
 
-  const pole = (etykieta) => {
+  const field = (label) => {
     const i = document.createElement("input");
     i.type = "text";
     i.inputMode = "numeric";
     i.maxLength = 2;
     i.autocomplete = "off";
-    i.setAttribute("aria-label", etykieta);
+    i.setAttribute("aria-label", label);
     i.addEventListener("focus", () => i.select());
     return i;
   };
-  const poleH = pole("Godzina"), poleM = pole("Minuty");
-  const dwukropek = document.createElement("span");
-  dwukropek.className = "dwukropek";
-  dwukropek.textContent = ":";
-  el.append(poleH, dwukropek, poleM);
+  const hourField = field("Godzina"), minuteField = field("Minuty");
+  const colon = document.createElement("span");
+  colon.className = "colon";
+  colon.textContent = ":";
+  el.append(hourField, colon, minuteField);
 
-  let pora = null;
+  let ampm = null;
   if (h12) {
-    pora = document.createElement("button");
-    pora.type = "button";
-    pora.className = "pora";
-    pora.addEventListener("click", () => {
+    ampm = document.createElement("button");
+    ampm.type = "button";
+    ampm.className = "ampm";
+    ampm.addEventListener("click", () => {
       h24 = (h24 + 12) % 24;
-      pokaz();
+      show();
     });
-    el.append(pora);
+    el.append(ampm);
   }
 
-  const pokaz = () => {
-    poleH.value = h12 ? String(h24 % 12 || 12) : dwa(h24);
-    poleM.value = dwa(min);
-    if (pora) pora.textContent = h24 >= 12 ? "PM" : "AM";
+  const show = () => {
+    hourField.value = h12 ? String(h24 % 12 || 12) : pad2(h24);
+    minuteField.value = pad2(min);
+    if (ampm) ampm.textContent = h24 >= 12 ? "PM" : "AM";
   };
-  // Wpis w polu godzin -> h24 (w trybie 12 h z zachowaniem AM/PM).
-  const zGodzin = (n) => (h12 ? (n % 12) + (h24 >= 12 ? 12 : 0) : n);
-  const czytaj = () => {
-    const n = parseInt(poleH.value, 10);
-    if (!Number.isNaN(n)) h24 = h12 ? zGodzin(Math.min(Math.max(n, 1), 12)) : Math.min(n, 23);
-    const m = parseInt(poleM.value, 10);
+  // Hour field input -> h24 (in 12 h mode keeping AM/PM).
+  const fromHours = (n) => (h12 ? (n % 12) + (h24 >= 12 ? 12 : 0) : n);
+  const read = () => {
+    const n = parseInt(hourField.value, 10);
+    if (!Number.isNaN(n)) h24 = h12 ? fromHours(Math.min(Math.max(n, 1), 12)) : Math.min(n, 23);
+    const m = parseInt(minuteField.value, 10);
     if (!Number.isNaN(m)) min = Math.min(m, 59);
   };
 
-  [[poleH, "h"], [poleM, "m"]].forEach(([i, rodzaj]) => {
+  [[hourField, "h"], [minuteField, "m"]].forEach(([i, kind]) => {
     i.addEventListener("input", () => {
       i.value = i.value.replace(/\D/g, "").slice(0, 2);
-      // Po pelnej godzinie przeskok do minut (jak w zegarku HA).
-      const prog = h12 ? 1 : 2;
-      if (rodzaj === "h" && (i.value.length === 2 || Number(i.value) > prog)) {
-        poleM.focus();
+      // After a complete hour jump to minutes (like the HA time picker).
+      const threshold = h12 ? 1 : 2;
+      if (kind === "h" && (i.value.length === 2 || Number(i.value) > threshold)) {
+        minuteField.focus();
       }
     });
     i.addEventListener("keydown", (ev) => {
       if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
         ev.preventDefault();
-        czytaj();
+        read();
         const d = ev.key === "ArrowUp" ? 1 : -1;
-        if (rodzaj === "h") h24 = (h24 + d + 24) % 24;
+        if (kind === "h") h24 = (h24 + d + 24) % 24;
         else min = (min + d * 5 + 60) % 60;
-        pokaz();
+        show();
         i.select();
       } else if (ev.key === "Enter") {
         i.blur();
@@ -172,785 +172,781 @@ function polCzasu(wartosc, h12, naZmiane) {
     });
   });
 
-  let start = `${dwa(h24)}:${dwa(min)}`;
+  let initial = `${pad2(h24)}:${pad2(min)}`;
   el.addEventListener("focusout", (ev) => {
     if (el.contains(ev.relatedTarget)) return;
-    czytaj();
-    pokaz();
-    const nowa = `${dwa(h24)}:${dwa(min)}`;
-    if (nowa !== start) {
-      start = nowa;
-      naZmiane(nowa);
+    read();
+    show();
+    const current = `${pad2(h24)}:${pad2(min)}`;
+    if (current !== initial) {
+      initial = current;
+      onChange(current);
     }
   });
 
-  pokaz();
+  show();
   return el;
 }
 
-/* Ruch w stylu HA: rozwija/zwija sam zmieniany element (wysokosc, marginesy,
-   przezroczystosc), a to, co pod nim, plynnie sie przesuwa - bez obcinania
-   calej karty. Krzywa i czas jak w animacjach Material w HA. */
-const RUCH = { duration: 250, easing: "cubic-bezier(.4,0,.2,1)" };
-const bezRuchu = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
-function wymiary(el) {
+/* HA-style motion: expands/collapses only the changed element (height, margins,
+   opacity) while everything below slides smoothly - without clipping the whole
+   card. Curve and duration as in HA's Material animations. */
+const MOTION = { duration: 250, easing: "cubic-bezier(.4,0,.2,1)" };
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+function measure(el) {
   const cs = getComputedStyle(el);
   return { height: `${el.getBoundingClientRect().height}px`, marginTop: cs.marginTop,
     marginBottom: cs.marginBottom, opacity: 1 };
 }
-const ZERO = { height: "0px", marginTop: "0px", marginBottom: "0px", opacity: 0 };
-function rozwin(el) {
-  if (!el || bezRuchu()) return;
+const COLLAPSED = { height: "0px", marginTop: "0px", marginBottom: "0px", opacity: 0 };
+function expand(el) {
+  if (!el || reducedMotion()) return;
   el.style.overflow = "hidden";
-  const a = el.animate([ZERO, wymiary(el)], RUCH);
+  const a = el.animate([COLLAPSED, measure(el)], MOTION);
   a.onfinish = a.oncancel = () => { el.style.overflow = ""; };
 }
-function zwin(el, potem) {
-  if (!el || bezRuchu()) return potem();
+function collapse(el, then) {
+  if (!el || reducedMotion()) return then();
   el.style.overflow = "hidden";
   el.style.pointerEvents = "none";
-  const a = el.animate([wymiary(el), ZERO], { ...RUCH, duration: 200, fill: "forwards" });
-  a.onfinish = potem;
+  const a = el.animate([measure(el), COLLAPSED], { ...MOTION, duration: 200, fill: "forwards" });
+  a.onfinish = then;
 }
 
-/* Schowek wspolny dla wszystkich kart na stronie: skopiowane bloki mozna wkleic
-   w dowolnej grupie dni tej samej karty albo w harmonogramie innego pokoju.
-   Jak zwykly schowek: zostaje do kolejnego skopiowania (albo przeladowania strony). */
-let schowek = null;   // { schedule, nazwa, etykieta, dni: [...], bloki: [...] }
-const karty = new Set();
-function ustawSchowek(wartosc) {
-  schowek = wartosc;
-  for (const k of karty) k._render();
+/* Clipboard shared by every card on the page: copied blocks can be pasted into
+   any day group of the same card or into another room's schedule. Like a regular
+   clipboard it lasts until the next copy (or a page reload). */
+let clipboard = null;   // { schedule, name, label, days: [...], blocks: [...] }
+const cards = new Set();
+function setClipboard(value) {
+  clipboard = value;
+  for (const c of cards) c._render();
 }
 
 class HeatingScheduleCard extends HTMLElement {
   connectedCallback() {
-    karty.add(this);
-    if (this._karta) this._render();
+    cards.add(this);
+    if (this._card) this._render();
   }
 
   disconnectedCallback() {
-    karty.delete(this);
+    cards.delete(this);
   }
 
   setConfig(config) {
     if (!config || !config.entity || !config.entity.startsWith("schedule.")) {
       throw new Error("Wymagane: entity wskazujące na encję schedule.*");
     }
-    // min/max/step domyslnie z termostatow pokoju (patrz _limity); w konfiguracji
-    // mozna je nadpisac recznie.
+    // min/max/step default to the room's thermostats (see _limits); the config
+    // can override them.
     this._config = { unit: "°C", grupuj_dni: false, ...config };
     this._scheduleId = config.entity.split(".")[1];
-    this._dane = null;       // { name, icon, dni: {dzien: [bloki]} }
-    this._brudne = false;
-    this._blad = null;
-    this._zapisywanie = false;
-    // Ktore dni sa rozwiniete. Domyslnie tylko dzisiejszy, zeby karta nie
-    // rozlewala sie na siedem dni naraz.
-    this._rozwiniete = new Set([DNI[(new Date().getDay() + 6) % 7][0]]);
+    this._data = null;       // { name, icon, days: {day: [blocks]} }
+    this._dirty = false;
+    this._error = null;
+    this._saving = false;
+    // Which days are expanded. Only today by default, so the card does not
+    // spread over all seven days at once.
+    this._expanded = new Set([DAYS[(new Date().getDay() + 6) % 7][0]]);
   }
 
   set hass(hass) {
-    const pierwszy = !this._hass;
+    const first = !this._hass;
     this._hass = hass;
-    // Karta zalezy wylacznie od konfiguracji harmonogramu (pobieranej przez WS),
-    // a nie od stanow encji. Przerysowanie przy kazdej zmianie hass przerywaloby
-    // przeciaganie suwaka, wiec renderujemy tylko po pobraniu i po akcji uzytkownika.
-    if (pierwszy) this._pobierz();
+    // The card depends only on the schedule configuration (fetched over WS),
+    // not on entity states. Re-rendering on every hass change would interrupt
+    // a slider drag, so it renders only after loading and after user actions.
+    if (first) this._load();
   }
 
   getCardSize() {
-    return this._dane ? 3 + Object.keys(this._dane.dni).length * 2 : 4;
+    return this._data ? 3 + Object.keys(this._data.days).length * 2 : 4;
   }
 
   static getStubConfig() {
     return { entity: "schedule.grzanie_salon" };
   }
 
-  /* Termostaty pokoju: `termostat` z konfiguracji (encja lub lista), inaczej
-     wszystkie climate.<pokoj>_* dla schedule.grzanie_<pokoj>. */
-  _termostaty() {
+  /* Room thermostats: `termostat` from the config (entity or list), otherwise
+     every climate.<room>_* for schedule.grzanie_<room>. */
+  _thermostats() {
     const t = this._config.termostat;
     if (t) return Array.isArray(t) ? t : [t];
-    const pokoj = this._scheduleId.replace(/^grzanie_/, "");
-    return Object.keys(this._hass.states).filter((e) => e.startsWith(`climate.${pokoj}_`));
+    const room = this._scheduleId.replace(/^grzanie_/, "");
+    return Object.keys(this._hass.states).filter((e) => e.startsWith(`climate.${room}_`));
   }
 
-  /* Zakres suwaka taki jak w termostacie: przy kilku glowicach czesc wspolna
-     zakresow; krok jak w karcie termostatu HA (target_temp_step, inaczej 0,5). */
-  _limity() {
-    const atr = this._termostaty()
+  /* Slider range like the thermostat's: with several valves the intersection of
+     their ranges; step like HA's thermostat card (target_temp_step, else 0.5). */
+  _limits() {
+    const attrs = this._thermostats()
       .map((e) => this._hass.states[e])
       .filter(Boolean)
       .map((s) => s.attributes);
-    const z = (klucz, f, domyslna) => {
-      const w = atr.map((a) => Number(a[klucz])).filter((x) => Number.isFinite(x) && x > 0);
-      return w.length ? f(...w) : domyslna;
+    const pick = (key, f, fallback) => {
+      const v = attrs.map((a) => Number(a[key])).filter((x) => Number.isFinite(x) && x > 0);
+      return v.length ? f(...v) : fallback;
     };
     return {
-      min: Number(this._config.min ?? z("min_temp", Math.max, 7)),
-      max: Number(this._config.max ?? z("max_temp", Math.min, 30)),
-      step: Number(this._config.step ?? z("target_temp_step", Math.max, 0.5)),
+      min: Number(this._config.min ?? pick("min_temp", Math.max, 7)),
+      max: Number(this._config.max ?? pick("max_temp", Math.min, 30)),
+      step: Number(this._config.step ?? pick("target_temp_step", Math.max, 0.5)),
     };
   }
 
-  async _pobierz() {
+  async _load() {
     try {
-      const lista = await this._hass.callWS({ type: "schedule/list" });
-      const s = lista.find((x) => x.id === this._scheduleId);
+      const list = await this._hass.callWS({ type: "schedule/list" });
+      const s = list.find((x) => x.id === this._scheduleId);
       if (!s) throw new Error(`Nie znaleziono harmonogramu „${this._scheduleId}”`);
-      const dni = {};
-      for (const [klucz] of DNI) {
-        dni[klucz] = (s[klucz] || []).map((b) => ({
+      const days = {};
+      for (const [key] of DAYS) {
+        days[key] = (s[key] || []).map((b) => ({
           from: hhmm(b.from),
           to: hhmm(b.to),
-          temp: Number((b.data || {}).temperatura ?? this._limity().min),
-          brakTemp: (b.data || {}).temperatura === undefined || (b.data || {}).temperatura === "",
+          temp: Number((b.data || {}).temperatura ?? this._limits().min),
+          missingTemp: (b.data || {}).temperatura === undefined || (b.data || {}).temperatura === "",
         }));
       }
-      this._dane = { name: s.name, icon: s.icon, dni };
-      this._uklad = this._ukladGrup();
-      this._oryginal = this._sygnatura();
-      this._blad = null;
+      this._data = { name: s.name, icon: s.icon, days };
+      this._layout = this._initialLayout();
+      this._original = this._signature();
+      this._error = null;
     } catch (e) {
-      this._blad = e.message || String(e);
+      this._error = e.message || String(e);
     }
     this._render();
   }
 
-  /* Uklad grup liczony przy wczytaniu: przy grupuj_dni:true razem trafiaja
-     wszystkie dni o identycznych blokach (takze niesasiednie, np. pn, wt, cz, pt
-     + osobno sr). Potem uklad jest stanem edycji - zmiana blokow nie przetasowuje
-     grup w trakcie, a dni przenosi sie chipami (_przelaczDzien). */
-  _ukladGrup() {
-    if (!this._config.grupuj_dni) return DNI.map(([k]) => [k]);
-    const sygn = (d) =>
-      JSON.stringify(this._dane.dni[d].map((b) => [b.from, b.to, b.temp]));
-    const wg = new Map();
-    for (const [k] of DNI) {
-      const s = sygn(k);
-      if (!wg.has(s)) wg.set(s, []);
-      wg.get(s).push(k);
+  /* Group layout computed on load: with grupuj_dni:true every day with identical
+     blocks goes into one group (also non-adjacent ones, e.g. mon, tue, thu, fri
+     + wed separately). After that the layout is editing state - changing blocks
+     does not reshuffle groups mid-edit; days move between groups with chips
+     (_toggleDay). */
+  _initialLayout() {
+    if (!this._config.grupuj_dni) return DAYS.map(([k]) => [k]);
+    const sig = (d) =>
+      JSON.stringify(this._data.days[d].map((b) => [b.from, b.to, b.temp]));
+    const bySig = new Map();
+    for (const [k] of DAYS) {
+      const s = sig(k);
+      if (!bySig.has(s)) bySig.set(s, []);
+      bySig.get(s).push(k);
     }
-    return [...wg.values()];
+    return [...bySig.values()];
   }
 
-  /* Stan blokow wszystkich dni w postaci porownywalnej (posortowane, bez pol
-     pomocniczych) - do sprawdzania, czy cos sie realnie zmienilo. */
-  _sygnatura() {
-    return JSON.stringify(DNI.map(([k]) => [...this._dane.dni[k]]
-      .sort((a, b) => naMinuty(a.from) - naMinuty(b.from))
+  /* Blocks of every day in comparable form (sorted, without helper fields) -
+     to check whether anything really changed. */
+  _signature() {
+    return JSON.stringify(DAYS.map(([k]) => [...this._data.days[k]]
+      .sort((a, b) => toMinutes(a.from) - toMinutes(b.from))
       .map((b) => [b.from, b.to, Number(b.temp)])));
   }
 
-  _grupy() {
-    const indeks = (k) => DNI.findIndex(([d]) => d === k);
-    return this._uklad
-      .map((dni) => [...dni].sort((a, b) => indeks(a) - indeks(b)))
-      .sort((a, b) => indeks(a[0]) - indeks(b[0]))
-      .map((dni) => ({
-        dni,
-        skroty: dni.map((k) => DNI[indeks(k)][1]),
-        pelna: this._config.grupuj_dni ? null : DNI[indeks(dni[0])][2],
+  _groups() {
+    const index = (k) => DAYS.findIndex(([d]) => d === k);
+    return this._layout
+      .map((days) => [...days].sort((a, b) => index(a) - index(b)))
+      .sort((a, b) => index(a[0]) - index(b[0]))
+      .map((days) => ({
+        days,
+        short: days.map((k) => DAYS[index(k)][1]),
+        full: this._config.grupuj_dni ? null : DAYS[index(days[0])][2],
       }));
   }
 
-  /* Ciag dni jako "a–b" (takze dwa dni: "sb–nd"), przecinki tylko miedzy
-     rozrzuconymi kawalkami: "pn–wt, cz–pt", "pn, śr, pt"; caly tydzien = "codziennie". */
-  _etykieta(g) {
-    if (g.pelna) return g.pelna;
-    if (g.dni.length === 7) return "codziennie";
-    const idx = g.dni.map((k) => DNI.findIndex(([d]) => d === k));
-    const czesci = [];
+  /* A run of days as "a–b" (two days too: "sb–nd"), commas only between
+     scattered pieces: "pn–wt, cz–pt", "pn, śr, pt"; the whole week = "codziennie". */
+  _label(g) {
+    if (g.full) return g.full;
+    if (g.days.length === 7) return "codziennie";
+    const idx = g.days.map((k) => DAYS.findIndex(([d]) => d === k));
+    const parts = [];
     for (let i = 0; i < idx.length; ) {
       let j = i;
       while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1) j++;
-      const dl = j - i + 1;
-      czesci.push(dl >= 2 ? `${DNI[idx[i]][1]}–${DNI[idx[j]][1]}` : DNI[idx[i]][1]);
+      const len = j - i + 1;
+      parts.push(len >= 2 ? `${DAYS[idx[i]][1]}–${DAYS[idx[j]][1]}` : DAYS[idx[i]][1]);
       i = j + 1;
     }
-    return czesci.join(", ");
+    return parts.join(", ");
   }
 
-  /* Chip dnia w rozwinietej grupie: dzien z grupy -> odlacza go do osobnej grupy
-     (z tymi samymi blokami, gotowej do zmiany); dzien spoza grupy -> dolacza go
-     i kopiuje mu bloki grupy. */
-  _przelaczDzien(grupa, dzien) {
-    const zrodlo = this._uklad.find((u) => u.includes(dzien));
-    if (grupa.dni.includes(dzien)) {
-      if (grupa.dni.length === 1) return;
-      zrodlo.splice(zrodlo.indexOf(dzien), 1);
-      this._uklad.push([dzien]);
-      this._nowaGrupa = dzien;
+  /* Day chip in an expanded group: a day from the group -> splits it into its own
+     group (with the same blocks, ready to change); a day outside the group ->
+     joins it and copies the group's blocks to it. */
+  _toggleDay(group, day) {
+    const source = this._layout.find((u) => u.includes(day));
+    if (group.days.includes(day)) {
+      if (group.days.length === 1) return;
+      source.splice(source.indexOf(day), 1);
+      this._layout.push([day]);
+      this._newGroup = day;
     } else {
-      zrodlo.splice(zrodlo.indexOf(dzien), 1);
-      if (!zrodlo.length) this._uklad.splice(this._uklad.indexOf(zrodlo), 1);
-      this._uklad.find((u) => u.includes(grupa.dni[0])).push(dzien);
-      this._dane.dni[dzien] = this._dane.dni[grupa.dni[0]].map((b) => ({ ...b }));
-      this._brudne = true;
+      source.splice(source.indexOf(day), 1);
+      if (!source.length) this._layout.splice(this._layout.indexOf(source), 1);
+      this._layout.find((u) => u.includes(group.days[0])).push(day);
+      this._data.days[day] = this._data.days[group.days[0]].map((b) => ({ ...b }));
+      this._dirty = true;
     }
-    // Obie grupy (stara i nowa) zostaja rozwiniete, zeby bylo widac efekt.
-    this._rozwiniete.add(dzien);
-    for (const k of zrodlo) this._rozwiniete.add(k);
-    for (const k of grupa.dni) this._rozwiniete.add(k);
+    // Both groups (old and new) stay expanded so the effect is visible.
+    this._expanded.add(day);
+    for (const k of source) this._expanded.add(k);
+    for (const k of group.days) this._expanded.add(k);
     this._render();
   }
 
-  _blediWalidacji() {
-    const b = [];
-    for (const [klucz, skrot] of DNI) {
-      const bloki = [...this._dane.dni[klucz]].sort(
-        (x, y) => naMinuty(x.from) - naMinuty(y.from)
+  _validationErrors() {
+    const errors = [];
+    for (const [key, short] of DAYS) {
+      const blocks = [...this._data.days[key]].sort(
+        (x, y) => toMinutes(x.from) - toMinutes(y.from)
       );
-      for (let i = 0; i < bloki.length; i++) {
-        if (naMinuty(bloki[i].to) <= naMinuty(bloki[i].from))
-          b.push(`${skrot}: blok ${bloki[i].from}-${bloki[i].to} kończy się przed startem`);
-        if (i > 0 && naMinuty(bloki[i].from) < naMinuty(bloki[i - 1].to))
-          b.push(`${skrot}: bloki ${bloki[i - 1].from}-${bloki[i - 1].to} i ${bloki[i].from}-${bloki[i].to} nachodzą na siebie`);
+      for (let i = 0; i < blocks.length; i++) {
+        if (toMinutes(blocks[i].to) <= toMinutes(blocks[i].from))
+          errors.push(`${short}: blok ${blocks[i].from}-${blocks[i].to} kończy się przed startem`);
+        if (i > 0 && toMinutes(blocks[i].from) < toMinutes(blocks[i - 1].to))
+          errors.push(`${short}: bloki ${blocks[i - 1].from}-${blocks[i - 1].to} i ${blocks[i].from}-${blocks[i].to} nachodzą na siebie`);
       }
     }
-    return b;
+    return errors;
   }
 
-  _zmien(grupa, idx, pole, wartosc) {
-    for (const d of grupa.dni) {
-      const blok = this._dane.dni[d][idx];
-      if (!blok) continue;
-      blok[pole] = wartosc;
-      if (pole === "temp") blok.brakTemp = false;
+  _change(group, idx, field, value) {
+    for (const d of group.days) {
+      const block = this._data.days[d][idx];
+      if (!block) continue;
+      block[field] = value;
+      if (field === "temp") block.missingTemp = false;
     }
-    // Zmiana wartosci (temperatura, godzina) nie zmienia ukladu karty - bez
-    // przebudowy DOM: tylko podsumowania dni, bledy i pasek zapisu. Dzieki temu
-    // nic nie skacze i fokus zostaje w polach.
-    this._odswiezStan();
+    // A value change (temperature, time) does not change the card layout - no
+    // DOM rebuild: only day summaries, errors and the save bar. Nothing jumps
+    // and focus stays in the fields.
+    this._refreshState();
   }
 
-  /* "1 blok · 23,0 °C" w naglowku grupy. */
-  /* Bledy walidacji i pasek zapisu - osobno od reszty karty, zeby zmiana wartosci
-     odswiezala tylko ten fragment. */
-  _renderStopka() {
-    const mBledow = this._body.querySelector(".miejsce-bledow");
-    const mPaska = this._body.querySelector(".miejsce-paska");
-    if (!mBledow || !mPaska) return;
-    const bledy = this._blediWalidacji();
-    this._brudne = this._sygnatura() !== this._oryginal;
+  /* Validation errors and the save bar - separate from the rest of the card, so
+     a value change refreshes only this part. */
+  _renderFooter() {
+    const errorsSlot = this._body.querySelector(".errors-slot");
+    const barSlot = this._body.querySelector(".save-bar-slot");
+    if (!errorsSlot || !barSlot) return;
+    const errors = this._validationErrors();
+    this._dirty = this._signature() !== this._original;
 
-    let hBledow = "";
-    if (bledy.length) hBledow += `<div class="blad">${bledy.map((x) => `• ${x}`).join("<br>")}</div>`;
-    if (this._blad) hBledow += `<div class="blad">${this._blad}</div>`;
-    if (hBledow !== this._hBledow) {
-      const bylo = !!this._hBledow;
-      this._hBledow = hBledow;
-      if (!hBledow && bylo && mBledow.firstElementChild) {
-        zwin(mBledow, () => { mBledow.innerHTML = this._hBledow; mBledow.getAnimations().forEach((a) => a.cancel()); mBledow.style.cssText = ""; });
+    let errorsHtml = "";
+    if (errors.length) errorsHtml += `<div class="error">${errors.map((x) => `• ${x}`).join("<br>")}</div>`;
+    if (this._error) errorsHtml += `<div class="error">${this._error}</div>`;
+    if (errorsHtml !== this._errorsHtml) {
+      const had = !!this._errorsHtml;
+      this._errorsHtml = errorsHtml;
+      if (!errorsHtml && had && errorsSlot.firstElementChild) {
+        collapse(errorsSlot, () => { errorsSlot.innerHTML = this._errorsHtml; errorsSlot.getAnimations().forEach((a) => a.cancel()); errorsSlot.style.cssText = ""; });
       } else {
-        mBledow.getAnimations().forEach((a) => a.cancel());
-        mBledow.style.cssText = "";
-        mBledow.innerHTML = hBledow;
-        if (!bylo) rozwin(mBledow);
+        errorsSlot.getAnimations().forEach((a) => a.cancel());
+        errorsSlot.style.cssText = "";
+        errorsSlot.innerHTML = errorsHtml;
+        if (!had) expand(errorsSlot);
       }
     }
 
-    // Pasek zapisu tylko wtedy, gdy jest co zapisac (albo trwa/skonczyl sie zapis).
-    const doZapisu = this._brudne && !bledy.length && !this._zapisywanie;
-    const stopka = this._brudne || this._zapisywanie || this._zapisano;
-    const pokazac = stopka && !mPaska.firstElementChild;
-    const schowac = !stopka && mPaska.firstElementChild;
-    this._stopkaWidoczna = stopka;
-    if (schowac) {
-      zwin(mPaska, () => {
-        if (this._brudne || this._zapisywanie || this._zapisano) return;
-        mPaska.innerHTML = "";
-        mPaska.getAnimations().forEach((a) => a.cancel());
-        mPaska.style.cssText = "";
+    // Save bar only when there is something to save (or a save is running/done).
+    const canSave = this._dirty && !errors.length && !this._saving;
+    const visible = this._dirty || this._saving || this._saved;
+    const show = visible && !barSlot.firstElementChild;
+    const hide = !visible && barSlot.firstElementChild;
+    this._footerVisible = visible;
+    if (hide) {
+      collapse(barSlot, () => {
+        if (this._dirty || this._saving || this._saved) return;
+        barSlot.innerHTML = "";
+        barSlot.getAnimations().forEach((a) => a.cancel());
+        barSlot.style.cssText = "";
       });
       return;
     }
-    if (!stopka) return;
-    mPaska.getAnimations().forEach((a) => a.cancel());
-    mPaska.style.cssText = "";
-    mPaska.innerHTML = `<div class="stopka${doZapisu ? " zmiany" : ""}">
-        <span class="stan">${
-          this._zapisywanie ? "Zapisywanie…"
-          : bledy.length ? "Popraw błędy, żeby zapisać"
-          : this._brudne ? "Masz niezapisane zmiany"
+    if (!visible) return;
+    barSlot.getAnimations().forEach((a) => a.cancel());
+    barSlot.style.cssText = "";
+    barSlot.innerHTML = `<div class="save-bar${canSave ? " changed" : ""}">
+        <span class="status">${
+          this._saving ? "Zapisywanie…"
+          : errors.length ? "Popraw błędy, żeby zapisać"
+          : this._dirty ? "Masz niezapisane zmiany"
           : "Zapisano"
         }</span>
-        <span class="przyciski">${this._brudne && !this._zapisywanie ? `<span class="slot-odrzuc"></span>` : ""}${this._brudne || this._zapisywanie ? `<span class="slot-zapisz"></span>` : ""}</span>
+        <span class="actions">${this._dirty && !this._saving ? `<span class="slot-discard"></span>` : ""}${this._dirty || this._saving ? `<span class="slot-save"></span>` : ""}</span>
       </div>`;
-    const slotZ = mPaska.querySelector(".slot-zapisz");
-    if (slotZ) {
-      const el = przyciskHA("Zapisz zmiany", { glowny: true });
-      const zablokowany = !this._brudne || bledy.length > 0 || this._zapisywanie;
-      el.disabled = zablokowany;
-      if (zablokowany) el.setAttribute("disabled", "");
-      el.addEventListener("click", () => this._zapisz());
-      slotZ.replaceWith(el);
+    const saveSlot = barSlot.querySelector(".slot-save");
+    if (saveSlot) {
+      const el = haButton("Zapisz zmiany", { primary: true });
+      const disabled = !this._dirty || errors.length > 0 || this._saving;
+      el.disabled = disabled;
+      if (disabled) el.setAttribute("disabled", "");
+      el.addEventListener("click", () => this._save());
+      saveSlot.replaceWith(el);
     }
-    const slotO = mPaska.querySelector(".slot-odrzuc");
-    if (slotO) {
-      const el = przyciskHA("Odrzuć");
-      el.addEventListener("click", () => this._odrzuc());
-      slotO.replaceWith(el);
+    const discardSlot = barSlot.querySelector(".slot-discard");
+    if (discardSlot) {
+      const el = haButton("Odrzuć");
+      el.addEventListener("click", () => this._discard());
+      discardSlot.replaceWith(el);
     }
-    if (pokazac) rozwin(mPaska);
+    if (show) expand(barSlot);
   }
 
-
-  /* Przy pelnym przerysowaniu pasek, ktory juz byl widoczny, nie wysuwa sie od nowa. */
-  _renderStopkaPoRysowaniu() {
-    const bylWidoczny = this._stopkaWidoczna;
-    this._renderStopka();
-    const mPaska = this._body.querySelector(".miejsce-paska");
-    if (bylWidoczny && mPaska) mPaska.getAnimations().forEach((a) => a.finish());
+  /* On a full re-render a save bar that was already visible does not slide in again. */
+  _renderFooterAfterDraw() {
+    const wasVisible = this._footerVisible;
+    this._renderFooter();
+    const barSlot = this._body.querySelector(".save-bar-slot");
+    if (wasVisible && barSlot) barSlot.getAnimations().forEach((a) => a.finish());
   }
 
-  _podsumowanie(g) {
-    const fmt = formatLiczby(this._hass);
+  /* "1 blok · 23,0 °C" in the group header. */
+  _summary(g) {
+    const fmt = numberFormatter(this._hass);
     const { unit } = this._config;
-    const bloki = this._dane.dni[g.dni[0]];
-    const t = bloki.map((b) => Number(b.temp));
-    const n = bloki.length;
-    const ile = n === 0 ? "brak bloków" : n === 1 ? "1 blok" : n < 5 ? `${n} bloki` : `${n} bloków`;
-    if (!n) return ile;
+    const blocks = this._data.days[g.days[0]];
+    const t = blocks.map((b) => Number(b.temp));
+    const n = blocks.length;
+    const count = n === 0 ? "brak bloków" : n === 1 ? "1 blok" : n < 5 ? `${n} bloki` : `${n} bloków`;
+    if (!n) return count;
     const lo = Math.min(...t), hi = Math.max(...t);
-    return `${ile} · ${lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`} ${unit}`;
+    return `${count} · ${lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`} ${unit}`;
   }
 
-  _odswiezStan() {
-    this._grupy().forEach((g, gi) => {
-      const el = this._body.querySelector(`.grupa[data-g="${gi}"] .podsumowanie`);
-      if (el) el.textContent = this._podsumowanie(g);
+  _refreshState() {
+    this._groups().forEach((g, gi) => {
+      const el = this._body.querySelector(`.group[data-g="${gi}"] .summary`);
+      if (el) el.textContent = this._summary(g);
     });
-    this._renderStopka();
+    this._renderFooter();
   }
 
-
-
-
-  _usun(grupa, idx) {
-    for (const d of grupa.dni) this._dane.dni[d].splice(idx, 1);
-    this._brudne = true;
+  _remove(group, idx) {
+    for (const d of group.days) this._data.days[d].splice(idx, 1);
+    this._dirty = true;
     this._render();
   }
 
-  /* Znajduje wolna luke w dobie (min. 30 min), zeby nowy blok nie nachodzil
-     na istniejace. Preferuje luke po ostatnim bloku, inaczej najszersza. */
-  _wolnaLuka(bloki) {
-    const MIN = 30, DOBA = 24 * 60 - 1;
-    const sort = [...bloki].sort((a, b) => naMinuty(a.from) - naMinuty(b.from));
-    const luki = [];
-    let kursor = 0;
-    for (const b of sort) {
-      const s = naMinuty(b.from);
-      if (s - kursor >= MIN) luki.push([kursor, s]);
-      kursor = Math.max(kursor, naMinuty(b.to));
+  /* Finds a free gap in the day (at least 30 min) so a new block does not overlap
+     existing ones. Prefers the gap after the last block, otherwise the widest. */
+  _freeGap(blocks) {
+    const MIN = 30, DAY_END = 24 * 60 - 1;
+    const sorted = [...blocks].sort((a, b) => toMinutes(a.from) - toMinutes(b.from));
+    const gaps = [];
+    let cursor = 0;
+    for (const b of sorted) {
+      const s = toMinutes(b.from);
+      if (s - cursor >= MIN) gaps.push([cursor, s]);
+      cursor = Math.max(cursor, toMinutes(b.to));
     }
-    if (DOBA - kursor >= MIN) luki.push([kursor, DOBA]);
-    if (!luki.length) return null;
-    const poOstatnim = luki[luki.length - 1][1] === DOBA ? luki[luki.length - 1] : null;
-    const najszersza = luki.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a), luki[0]);
-    const [od, doo] = poOstatnim || najszersza;
-    return [od, Math.min(od + 120, doo)];
+    if (DAY_END - cursor >= MIN) gaps.push([cursor, DAY_END]);
+    if (!gaps.length) return null;
+    const afterLast = gaps[gaps.length - 1][1] === DAY_END ? gaps[gaps.length - 1] : null;
+    const widest = gaps.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a), gaps[0]);
+    const [start, end] = afterLast || widest;
+    return [start, Math.min(start + 120, end)];
   }
 
-  _dodaj(grupa) {
-    const wzor = this._wolnaLuka(this._dane.dni[grupa.dni[0]]);
-    if (!wzor) {
-      this._blad = "Brak wolnego miejsca w dobie - usuń lub skróć istniejący blok.";
+  _add(group) {
+    const gap = this._freeGap(this._data.days[group.days[0]]);
+    if (!gap) {
+      this._error = "Brak wolnego miejsca w dobie - usuń lub skróć istniejący blok.";
       this._render();
       return;
     }
     const fmt = (m) =>
       `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-    const [od, doo] = wzor;
-    for (const d of grupa.dni) {
-      this._dane.dni[d].push({ from: fmt(od), to: fmt(doo), temp: 21, brakTemp: false });
-      this._dane.dni[d].sort((a, b) => naMinuty(a.from) - naMinuty(b.from));
+    const [start, end] = gap;
+    for (const d of group.days) {
+      this._data.days[d].push({ from: fmt(start), to: fmt(end), temp: 21, missingTemp: false });
+      this._data.days[d].sort((a, b) => toMinutes(a.from) - toMinutes(b.from));
     }
-    // Zapamietujemy, ktory wiersz jest nowy, zeby go wyroznic animacja wejscia.
-    this._nowy = { dzien: grupa.dni[0], from: fmt(od) };
-    this._blad = null;
-    this._brudne = true;
+    // Remember which row is new, to highlight it with an enter animation.
+    this._newBlock = { day: group.days[0], from: fmt(start) };
+    this._error = null;
+    this._dirty = true;
     this._render();
   }
 
-  _kopiuj(grupa) {
-    ustawSchowek({
+  _copy(group) {
+    setClipboard({
       schedule: this._scheduleId,
-      nazwa: this._nazwaPokoju(),
-      etykieta: this._etykieta(grupa),
-      dni: [...grupa.dni],
-      bloki: this._dane.dni[grupa.dni[0]].map((b) => ({ ...b })),
+      name: this._roomName(),
+      label: this._label(group),
+      days: [...group.days],
+      blocks: this._data.days[group.days[0]].map((b) => ({ ...b })),
     });
   }
 
-  /* Nazwa do opisu schowka: obszar harmonogramu w HA (Salon, Łazienka...),
-     bo same harmonogramy nazywaja sie tak samo ("Grzanie"). */
-  _nazwaPokoju() {
+  /* Name for the clipboard description: the schedule's area in HA (Living room,
+     Bathroom...), because the schedules themselves share one name ("Heating"). */
+  _roomName() {
     const h = this._hass || {};
     const e = h.entities?.[this._config.entity];
-    const obszar = e?.area_id || (e?.device_id && h.devices?.[e.device_id]?.area_id);
-    return (obszar && h.areas?.[obszar]?.name) || this._dane.name || this._scheduleId;
+    const area = e?.area_id || (e?.device_id && h.devices?.[e.device_id]?.area_id);
+    return (area && h.areas?.[area]?.name) || this._data.name || this._scheduleId;
   }
 
-  _zrodloSchowka(grupa) {
-    return !!schowek && schowek.schedule === this._scheduleId
-      && schowek.dni.length === grupa.dni.length && grupa.dni.every((d) => schowek.dni.includes(d));
+  _isClipboardSource(group) {
+    return !!clipboard && clipboard.schedule === this._scheduleId
+      && clipboard.days.length === group.days.length && group.days.every((d) => clipboard.days.includes(d));
   }
 
-  /* Wkleja bloki ze schowka do wszystkich dni grupy (zastepuje ich bloki).
-     Temperatury dopasowane do zakresu i kroku termostatow tego pokoju. */
-  _wklej(grupa) {
-    if (!schowek) return;
-    const { min, max, step } = this._limity();
-    const dopasuj = (v) => Math.min(max, Math.max(min, Math.round(Number(v) / step) * step));
-    for (const d of grupa.dni) {
-      this._dane.dni[d] = schowek.bloki.map((b) => ({ ...b, temp: dopasuj(b.temp), brakTemp: false }));
+  /* Pastes the clipboard blocks into every day of the group (replacing its blocks).
+     Temperatures are fitted to the range and step of this room's thermostats. */
+  _paste(group) {
+    if (!clipboard) return;
+    const { min, max, step } = this._limits();
+    const fit = (v) => Math.min(max, Math.max(min, Math.round(Number(v) / step) * step));
+    for (const d of group.days) {
+      this._data.days[d] = clipboard.blocks.map((b) => ({ ...b, temp: fit(b.temp), missingTemp: false }));
     }
-    for (const d of grupa.dni) this._rozwiniete.add(d);
+    for (const d of group.days) this._expanded.add(d);
     this._render();
   }
 
-
-  async _zapisz() {
-    if (this._blediWalidacji().length) return;
-    this._zapisywanie = true;
+  async _save() {
+    if (this._validationErrors().length) return;
+    this._saving = true;
     this._render();
     try {
       const msg = {
         type: "schedule/update",
         schedule_id: this._scheduleId,
-        name: this._dane.name,
-        icon: this._dane.icon,
+        name: this._data.name,
+        icon: this._data.icon,
       };
-      for (const [klucz] of DNI) {
-        msg[klucz] = [...this._dane.dni[klucz]]
-          .sort((a, b) => naMinuty(a.from) - naMinuty(b.from))
+      for (const [key] of DAYS) {
+        msg[key] = [...this._data.days[key]]
+          .sort((a, b) => toMinutes(a.from) - toMinutes(b.from))
           .map((b) => ({
-            from: pelna(b.from),
-            to: pelna(b.to),
+            from: withSeconds(b.from),
+            to: withSeconds(b.to),
             data: { temperatura: Number(b.temp) },
           }));
       }
       await this._hass.callWS(msg);
-      this._brudne = false;
-      this._blad = null;
-      // Flage zdejmujemy przed _pobierz(), bo to ono rysuje karte po zapisie -
-      // inaczej stopka zostawala na "Zapisywanie…".
-      this._zapisywanie = false;
-      // Krotkie potwierdzenie, potem pasek zapisu sie chowa.
-      this._zapisano = true;
-      await this._pobierz();
-      clearTimeout(this._timerZapisano);
-      this._timerZapisano = setTimeout(() => {
-        this._zapisano = false;
-        // Nie przerysowujemy w trakcie edycji pola - zgubiloby fokus;
-        // pasek zniknie przy najblizszym przerysowaniu.
+      this._dirty = false;
+      this._error = null;
+      // The flag is cleared before _load(), because that is what renders the card
+      // after saving - otherwise the footer stayed on "Zapisywanie…".
+      this._saving = false;
+      // A short confirmation, then the save bar hides.
+      this._saved = true;
+      await this._load();
+      clearTimeout(this._savedTimer);
+      this._savedTimer = setTimeout(() => {
+        this._saved = false;
+        // No re-render while a field is being edited - it would lose focus;
+        // the bar disappears on the next re-render.
         if (!this._body.matches(":focus-within")) this._render();
       }, 2000);
       return;
     } catch (e) {
-      this._blad = `Zapis nieudany: ${e.message || e}`;
+      this._error = `Zapis nieudany: ${e.message || e}`;
     }
-    this._zapisywanie = false;
+    this._saving = false;
     this._render();
   }
 
-  _odrzuc() {
-    this._brudne = false;
-    this._blad = null;
-    this._pobierz();
+  _discard() {
+    this._dirty = false;
+    this._error = null;
+    this._load();
   }
 
   _render() {
-    this._rysuj();
+    this._draw();
   }
 
-  _rysuj() {
-    if (!this._karta) {
-      this._karta = document.createElement("ha-card");
+  _draw() {
+    if (!this._card) {
+      this._card = document.createElement("ha-card");
       this._style = document.createElement("style");
       this._style.textContent = `
-        /* Odstep tytul -> pierwszy dzien jak w karcie encji HA (16 px): naglowek ha-card
-           ma 24 px dolnego paddingu, karta encji podciaga tresc o 8 px. */
-        .tresc { padding:0 16px 16px; margin-top:-8px; }
-        .grupa:first-of-type { margin-top:0; }
-        .grupa { margin:12px 0 4px; }
-        .dni { display:flex; align-items:center; gap:4px;
+        /* Title -> first day spacing like HA's entities card (16 px): the ha-card
+           header has 24 px bottom padding, the entities card pulls content up 8 px. */
+        .content { padding:0 16px 16px; margin-top:-8px; }
+        .group:first-of-type { margin-top:0; }
+        .group { margin:12px 0 4px; }
+        .group-header { display:flex; align-items:center; gap:4px;
           border-top:1px solid var(--divider-color); }
-        .naglowek-dnia { flex:1; display:flex; align-items:center; gap:8px; min-width:0;
+        .day-toggle { flex:1; display:flex; align-items:center; gap:8px; min-width:0;
           background:none; border:none; cursor:pointer; font:inherit; text-align:left;
           padding:10px 4px; color:var(--primary-text-color); border-radius:8px; }
-        .naglowek-dnia:hover { background:var(--secondary-background-color); }
-        .naglowek-dnia:focus-visible { outline:2px solid var(--primary-color); outline-offset:-2px; }
-        .naglowek-dnia ha-icon.chev { color:var(--secondary-text-color); --mdc-icon-size:20px;
+        .day-toggle:hover { background:var(--secondary-background-color); }
+        .day-toggle:focus-visible { outline:2px solid var(--primary-color); outline-offset:-2px; }
+        .day-toggle ha-icon.chev { color:var(--secondary-text-color); --mdc-icon-size:20px;
           flex:0 0 auto; transition:transform .24s cubic-bezier(.4,0,.2,1); }
-        .grupa.otwarty .naglowek-dnia ha-icon.chev { transform:rotate(90deg); }
+        .group.open .day-toggle ha-icon.chev { transform:rotate(90deg); }
 
-        /* Animacja rozwijania: 0fr -> 1fr pozwala plynnie dojsc do naturalnej
-           wysokosci, czego max-height z sztywna wartoscia nie potrafi. */
-        .dzien-tresc { display:grid; grid-template-rows:0fr;
+        /* Expand animation: 0fr -> 1fr reaches the natural height smoothly,
+           which max-height with a fixed value cannot do. */
+        .group-body { display:grid; grid-template-rows:0fr;
           transition:grid-template-rows .26s cubic-bezier(.4,0,.2,1); }
-        .grupa.otwarty .dzien-tresc { grid-template-rows:1fr; }
-        .dzien-inner { overflow:hidden; min-height:0; }
-        .grupa.otwarty .dzien-inner { padding-bottom:6px; }
+        .group.open .group-body { grid-template-rows:1fr; }
+        .group-inner { overflow:hidden; min-height:0; }
+        .group.open .group-inner { padding-bottom:6px; }
         @media (prefers-reduced-motion: reduce) {
-          .dzien-tresc { transition:none; }
-          .naglowek-dnia ha-icon.chev { transition:none; }
+          .group-body { transition:none; }
+          .day-toggle ha-icon.chev { transition:none; }
         }
-        .dni ha-icon-button.aktywny { color:var(--primary-color); }
-        .chipy { display:flex; flex-wrap:wrap; gap:6px; padding:4px 0 8px; }
+        .group-header ha-icon-button.active { color:var(--primary-color); }
+        .chips { display:flex; flex-wrap:wrap; gap:6px; padding:4px 0 8px; }
         .chip { font:inherit; font-size:.8rem; min-width:34px; height:28px; padding:0 10px; cursor:pointer;
           border-radius:14px; border:1px solid var(--divider-color); background:none;
           color:var(--secondary-text-color); transition:background .15s ease, color .15s ease, border-color .15s ease; }
         .chip:hover { border-color:var(--primary-color); color:var(--primary-text-color); }
-        .chip.wl { background:color-mix(in srgb, var(--primary-color) 22%, transparent);
+        .chip.on { background:color-mix(in srgb, var(--primary-color) 22%, transparent);
           border-color:transparent; color:var(--primary-text-color); font-weight:500; }
         .chip[disabled] { cursor:default; opacity:.85; }
         .chip:focus-visible { outline:2px solid var(--primary-color); outline-offset:1px; }
-        .naglowek-dnia .nazwa { font-weight:600; font-size:.92rem; flex:0 0 auto; }
-        .naglowek-dnia .podsumowanie { color:var(--secondary-text-color); font-size:.84rem;
+        .day-toggle .name { font-weight:600; font-size:.92rem; flex:0 0 auto; }
+        .day-toggle .summary { color:var(--secondary-text-color); font-size:.84rem;
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .dni ha-icon-button { --mdc-icon-button-size:32px; --mdc-icon-size:17px; }
-        .grupa:first-of-type .dni { border-top:none; padding-top:0; }
-        /* Dwie linie: godziny + usun u gory, suwak z wartoscia pod spodem.
-           W jednej linii (~490 px) nie miescilo sie w karcie i ucinalo wartosc. */
-        .wiersz { display:grid; grid-template-columns:auto auto 1fr auto;
-          grid-template-areas:"od do . usun" "suw suw suw val";
+        .group-header ha-icon-button { --mdc-icon-button-size:32px; --mdc-icon-size:17px; }
+        .group:first-of-type .group-header { border-top:none; padding-top:0; }
+        /* Two lines: times + remove on top, slider with value below.
+           One line (~490 px) did not fit the card and clipped the value. */
+        .row { display:grid; grid-template-columns:auto auto 1fr auto;
+          grid-template-areas:"from to . remove" "slider slider slider val";
           align-items:center; column-gap:8px; row-gap:2px; padding:6px 0; }
-        .wiersz > :nth-child(1) { grid-area:od; }
-        .wiersz > :nth-child(2) { grid-area:do; }
-        .wiersz > :nth-child(3) { grid-area:suw; min-width:0; }
-        .wiersz > :nth-child(4) { grid-area:val; }
-        .wiersz > :nth-child(5) { grid-area:usun; justify-self:end; }
-        .wiersz ha-slider { width:100%; --md-slider-active-track-color:var(--primary-color);
+        .row > :nth-child(1) { grid-area:from; }
+        .row > :nth-child(2) { grid-area:to; }
+        .row > :nth-child(3) { grid-area:slider; min-width:0; }
+        .row > :nth-child(4) { grid-area:val; }
+        .row > :nth-child(5) { grid-area:remove; justify-self:end; }
+        .row ha-slider { width:100%; --md-slider-active-track-color:var(--primary-color);
           --md-slider-handle-color:var(--primary-color); }
-        .wiersz input[type=range] { width:100%; accent-color:var(--primary-color); }
+        .row input[type=range] { width:100%; accent-color:var(--primary-color); }
         .val { font-variant-numeric:tabular-nums; min-width:72px; text-align:right;
           color:var(--primary-text-color); font-size:.95rem; }
         ha-icon-button { --mdc-icon-button-size:40px; --mdc-icon-size:20px;
           color:var(--secondary-text-color); flex:0 0 auto; }
-        ha-icon-button.usun:hover { color:var(--error-color); }
-        ha-icon-button:not(.usun):hover { color:var(--primary-text-color); }
-        /* Pole czasu: wyglad pola tekstowego HA (obrys, zaokraglenie, fokus). */
-        .czas { display:inline-flex; align-items:center; height:36px; padding:0 8px;
+        ha-icon-button.remove:hover { color:var(--error-color); }
+        ha-icon-button:not(.remove):hover { color:var(--primary-text-color); }
+        /* Time field: looks like an HA text field (outline, radius, focus). */
+        .time { display:inline-flex; align-items:center; height:36px; padding:0 8px;
           border:1px solid var(--divider-color); border-radius:8px; gap:1px;
           background:var(--card-background-color); color:var(--primary-text-color);
           font-variant-numeric:tabular-nums; transition:border-color .15s ease; }
-        .czas:hover { border-color:var(--secondary-text-color); }
-        .czas:focus-within { border-color:var(--primary-color); box-shadow:0 0 0 1px var(--primary-color); }
-        .czas input { width:2.2ch; border:none; outline:none; background:none; padding:0;
+        .time:hover { border-color:var(--secondary-text-color); }
+        .time:focus-within { border-color:var(--primary-color); box-shadow:0 0 0 1px var(--primary-color); }
+        .time input { width:2.2ch; border:none; outline:none; background:none; padding:0;
           color:inherit; font:inherit; font-size:.95rem; text-align:center; caret-color:var(--primary-color); }
-        .czas input:focus { background:color-mix(in srgb, var(--primary-color) 18%, transparent); border-radius:4px; }
-        .czas .dwukropek { color:var(--secondary-text-color); }
-        .czas .pora { margin-left:6px; border:none; border-radius:4px; padding:2px 4px; cursor:pointer;
+        .time input:focus { background:color-mix(in srgb, var(--primary-color) 18%, transparent); border-radius:4px; }
+        .time .colon { color:var(--secondary-text-color); }
+        .time .ampm { margin-left:6px; border:none; border-radius:4px; padding:2px 4px; cursor:pointer;
           background:var(--secondary-background-color); color:var(--primary-text-color); font:inherit; font-size:.8rem; }
-        .pusto { color:var(--secondary-text-color); font-style:italic; padding:4px 0; }
-        /* Warianty zapasowe: uzywane tylko wtedy, gdy komponentu HA brak. */
-        .zapasowy { font:inherit; border:1px solid var(--divider-color); border-radius:8px;
+        .empty { color:var(--secondary-text-color); font-style:italic; padding:4px 0; }
+        /* Fallbacks: used only when the HA element is missing. */
+        .fallback { font:inherit; border:1px solid var(--divider-color); border-radius:8px;
           background:var(--card-background-color); color:var(--primary-text-color);
           padding:6px 12px; cursor:pointer; }
-        .zapasowy.glowny { background:var(--primary-color); color:var(--text-primary-color);
+        .fallback.primary { background:var(--primary-color); color:var(--text-primary-color);
           border-color:var(--primary-color); }
-        .zapasowy[disabled] { opacity:.45; cursor:default; }
-        .zapasowy.ikonka { border:none; background:none; font-size:1.15rem; padding:2px 8px; }
-        .stopka { display:flex; justify-content:space-between; align-items:center;
+        .fallback[disabled] { opacity:.45; cursor:default; }
+        .fallback.icon-only { border:none; background:none; font-size:1.15rem; padding:2px 8px; }
+        .save-bar { display:flex; justify-content:space-between; align-items:center;
           gap:12px; margin-top:14px; padding:12px 14px; border-radius:10px;
           background:var(--secondary-background-color); transition:background .2s ease; }
-        .stopka.zmiany { background:color-mix(in srgb, var(--primary-color) 14%, transparent); }
-        .stopka.zmiany .stan { color:var(--primary-color); font-weight:600; }
-        .miejsce-paska, .miejsce-bledow { display:flow-root; }
-        .stopka .przyciski { display:flex; gap:8px; align-items:center; }
-        .stopka mwc-button, .stopka ha-button { --mdc-theme-primary:var(--primary-color); }
+        .save-bar.changed { background:color-mix(in srgb, var(--primary-color) 14%, transparent); }
+        .save-bar.changed .status { color:var(--primary-color); font-weight:600; }
+        .save-bar-slot, .errors-slot { display:flow-root; }
+        .save-bar .actions { display:flex; gap:8px; align-items:center; }
+        .save-bar mwc-button, .save-bar ha-button { --mdc-theme-primary:var(--primary-color); }
 
-        .stan { font-size:.85rem; color:var(--secondary-text-color); }
-        .blad { color:var(--error-color); font-size:.85rem; padding:8px 0; }
-        .ostrzezenie { color:var(--warning-color); font-size:.8rem; }
+        .status { font-size:.85rem; color:var(--secondary-text-color); }
+        .error { color:var(--error-color); font-size:.85rem; padding:8px 0; }
+        .warning { color:var(--warning-color); font-size:.8rem; }
       `;
-      this._karta.appendChild(this._style);
+      this._card.appendChild(this._style);
       this._body = document.createElement("div");
-      this._karta.appendChild(this._body);
-      this.appendChild(this._karta);
+      this._card.appendChild(this._body);
+      this.appendChild(this._card);
     }
 
-    if (this._blad && !this._dane) {
-      this._body.innerHTML = `<div class="tresc blad">${this._blad}</div>`;
+    if (this._error && !this._data) {
+      this._body.innerHTML = `<div class="content error">${this._error}</div>`;
       return;
     }
-    if (!this._dane) {
-      this._body.innerHTML = `<div class="tresc stan">Wczytywanie…</div>`;
+    if (!this._data) {
+      this._body.innerHTML = `<div class="content status">Wczytywanie…</div>`;
       return;
     }
-    // "Niezapisane zmiany" tylko gdy dane roznia sie od zapisanych w HA - klikniecie
-    // i odklikniecie dnia (albo suwak z powrotem na te sama wartosc) nic nie zmienia.
-    this._brudne = this._sygnatura() !== this._oryginal;
+    // "Unsaved changes" only when the data differs from what HA has saved - toggling
+    // a day on and off (or a slider back to the same value) changes nothing.
+    this._dirty = this._signature() !== this._original;
 
     const { unit } = this._config;
-    const fmt = formatLiczby(this._hass);
-    const { min, max, step } = this._limity();
-    const tytul = this._config.title || this._dane.name || this._scheduleId;
-    const bledy = this._blediWalidacji();
+    const fmt = numberFormatter(this._hass);
+    const { min, max, step } = this._limits();
+    const title = this._config.title || this._data.name || this._scheduleId;
 
-    const grupy = this._grupy();
-    // Standardowy naglowek ha-card (rozmiar i krój jak w innych kartach HA), bez ikony.
-    this._karta.header = tytul;
-    let html = `<div class="tresc">`;
+    const groups = this._groups();
+    // Standard ha-card header (size and font like other HA cards), without an icon.
+    this._card.header = title;
+    let html = `<div class="content">`;
 
-    grupy.forEach((g, gi) => {
-      const bloki = this._dane.dni[g.dni[0]];
-      const otwarty = g.dni.some((d) => this._rozwiniete.has(d));
-      const n = bloki.length;
+    groups.forEach((g, gi) => {
+      const blocks = this._data.days[g.days[0]];
+      const open = g.days.some((d) => this._expanded.has(d));
+      const n = blocks.length;
 
-      const nowa = this._nowaGrupa && g.dni.length === 1 && g.dni[0] === this._nowaGrupa;
-      html += `<div class="grupa${otwarty ? " otwarty" : ""}${nowa ? " nowa" : ""}" data-g="${gi}">
-        <div class="dni">
-          <button class="naglowek-dnia" data-g="${gi}" aria-expanded="${otwarty}">
+      const isNew = this._newGroup && g.days.length === 1 && g.days[0] === this._newGroup;
+      html += `<div class="group${open ? " open" : ""}${isNew ? " new" : ""}" data-g="${gi}">
+        <div class="group-header">
+          <button class="day-toggle" data-g="${gi}" aria-expanded="${open}">
             <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
-            <span class="nazwa">${this._etykieta(g)}</span>
-            <span class="podsumowanie">${this._podsumowanie(g)}</span>
+            <span class="name">${this._label(g)}</span>
+            <span class="summary">${this._summary(g)}</span>
           </button>
-          ${schowek ? `<span class="slot-wklej" data-g="${gi}"></span>` : ""}
-          <span class="slot-kopiuj" data-g="${gi}"></span>
+          ${clipboard ? `<span class="slot-paste" data-g="${gi}"></span>` : ""}
+          <span class="slot-copy" data-g="${gi}"></span>
         </div>
-        <div class="dzien-tresc"><div class="dzien-inner">`;
+        <div class="group-body"><div class="group-inner">`;
       if (this._config.grupuj_dni) {
-        // Chipy dni: ktore dni korzystaja z tych blokow.
-        html += `<div class="chipy" role="group" aria-label="Dni z tymi blokami">${DNI.map(([k, skrot, pelna]) => {
-          const w = g.dni.includes(k);
-          const jedyny = w && g.dni.length === 1;
-          return `<button class="chip${w ? " wl" : ""}" data-g="${gi}" data-d="${k}" aria-pressed="${w}"
-            aria-label="${pelna}"${jedyny ? " disabled" : ""}>${skrot}</button>`;
+        // Day chips: which days use these blocks.
+        html += `<div class="chips" role="group" aria-label="Dni z tymi blokami">${DAYS.map(([k, short, full]) => {
+          const on = g.days.includes(k);
+          const only = on && g.days.length === 1;
+          return `<button class="chip${on ? " on" : ""}" data-g="${gi}" data-d="${k}" aria-pressed="${on}"
+            aria-label="${full}"${only ? " disabled" : ""}>${short}</button>`;
         }).join("")}</div>`;
       }
 
       if (!n) {
-        html += `<div class="pusto">brak bloków - obowiązuje podtrzymanie przez całą dobę</div>`;
+        html += `<div class="empty">brak bloków - obowiązuje podtrzymanie przez całą dobę</div>`;
       }
-      bloki.forEach((b, bi) => {
-        const nowy = this._nowy && this._nowy.dzien === g.dni[0] && this._nowy.from === b.from;
-        html += `<div class="wiersz${nowy ? " nowy" : ""}">
-          <span class="slot-od" data-g="${gi}" data-b="${bi}"></span>
-          <span class="slot-do" data-g="${gi}" data-b="${bi}"></span>
-          <span class="slot" data-g="${gi}" data-b="${bi}"></span>
+      blocks.forEach((b, bi) => {
+        const isNewRow = this._newBlock && this._newBlock.day === g.days[0] && this._newBlock.from === b.from;
+        html += `<div class="row${isNewRow ? " new" : ""}">
+          <span class="slot-from" data-g="${gi}" data-b="${bi}"></span>
+          <span class="slot-to" data-g="${gi}" data-b="${bi}"></span>
+          <span class="slot-slider" data-g="${gi}" data-b="${bi}"></span>
           <span class="val">${fmt(b.temp)} ${unit}</span>
-          <span class="slot-usun" data-g="${gi}" data-b="${bi}"></span>
+          <span class="slot-remove" data-g="${gi}" data-b="${bi}"></span>
         </div>`;
       });
-      html += `<span class="slot-dodaj" data-g="${gi}"></span></div></div></div>`;
+      html += `<span class="slot-add" data-g="${gi}"></span></div></div></div>`;
     });
 
-    html += `<div class="miejsce-stopki"><div class="miejsce-bledow"></div><div class="miejsce-paska"></div></div>`;
+    html += `<div class="footer"><div class="errors-slot"></div><div class="save-bar-slot"></div></div>`;
     html += `</div>`;
 
     this._body.innerHTML = html;
-    this._hBledow = undefined;
+    this._errorsHtml = undefined;
 
-    // Suwak: uzywamy komponentu HA (ha-slider), zeby wyglad i zachowanie
-    // byly identyczne jak w wierszach input_number. Fallback na natywny range,
-    // gdyby komponent nie byl jeszcze zarejestrowany.
-    const natywny = !!customElements.get("ha-slider");
-    this._body.querySelectorAll(".slot").forEach((slot) => {
+    // Slider: HA's own element (ha-slider), so it looks and behaves exactly like
+    // input_number rows. Falls back to a native range input if the element is
+    // not registered yet.
+    const native = !!customElements.get("ha-slider");
+    this._body.querySelectorAll(".slot-slider").forEach((slot) => {
       const gi = +slot.dataset.g, bi = +slot.dataset.b;
-      const blok = this._dane.dni[grupy[gi].dni[0]][bi];
+      const block = this._data.days[groups[gi].days[0]][bi];
       let el;
-      if (natywny) {
+      if (native) {
         el = document.createElement("ha-slider");
         el.setAttribute("labeled", "");
       } else {
         el = document.createElement("input");
         el.type = "range";
       }
-      el.min = min; el.max = max; el.step = step; el.value = blok.temp;
-      const czytaj = (ev) => Number(ev.target.value ?? el.value);
+      el.min = min; el.max = max; el.step = step; el.value = block.temp;
+      const read = (ev) => Number(ev.target.value ?? el.value);
       el.addEventListener("input", (ev) => {
         const v = slot.parentElement.querySelector(".val");
-        if (v) v.textContent = `${fmt(czytaj(ev))} ${unit}`;
+        if (v) v.textContent = `${fmt(read(ev))} ${unit}`;
       });
       el.addEventListener("change", (ev) =>
-        this._zmien(grupy[gi], bi, "temp", czytaj(ev))
+        this._change(groups[gi], bi, "temp", read(ev))
       );
       slot.replaceWith(el);
     });
-    // Pola czasu - tekstowe, w formacie 12/24 h z profilu HA.
-    const h12 = zegar12(this._hass);
-    [["slot-od", "from"], ["slot-do", "to"]].forEach(([klasa, pole]) => {
-      this._body.querySelectorAll(`.${klasa}`).forEach((slot) => {
+    // Time fields - text, in the 12/24 h format from the HA profile.
+    const h12 = uses12h(this._hass);
+    [["slot-from", "from"], ["slot-to", "to"]].forEach(([cls, field]) => {
+      this._body.querySelectorAll(`.${cls}`).forEach((slot) => {
         const gi = +slot.dataset.g, bi = +slot.dataset.b;
-        const blok = this._dane.dni[grupy[gi].dni[0]][bi];
-        const el = polCzasu(blok[pole], h12, (v) => this._zmien(grupy[gi], bi, pole, v));
+        const block = this._data.days[groups[gi].days[0]][bi];
+        const el = timeField(block[field], h12, (v) => this._change(groups[gi], bi, field, v));
         slot.replaceWith(el);
       });
     });
 
-    // Usuwanie bloku - ha-icon-button z ikona kosza.
-    this._body.querySelectorAll(".slot-usun").forEach((slot) => {
+    // Removing a block - ha-icon-button with a close icon.
+    this._body.querySelectorAll(".slot-remove").forEach((slot) => {
       const gi = +slot.dataset.g, bi = +slot.dataset.b;
-      const el = ikonaHA("mdi:close", "Usuń");
-      el.classList.add("usun");
+      const el = haIconButton("mdi:close", "Usuń");
+      el.classList.add("remove");
       el.addEventListener("click", () => {
-        const wiersz = el.closest(".wiersz");
-        // Usuwamy dopiero po zwinieciu - i tylko jesli karta w miedzyczasie nie zostala
-        // przerysowana (np. "Odrzuc"), bo wtedy indeks dotyczylby juz innych danych.
-        zwin(wiersz, () => { if (wiersz.isConnected) this._usun(grupy[gi], bi); });
+        const row = el.closest(".row");
+        // Remove only after collapsing - and only if the card was not re-rendered
+        // in the meantime (e.g. "Discard"), because the index would then refer
+        // to different data.
+        collapse(row, () => { if (row.isConnected) this._remove(groups[gi], bi); });
       });
       slot.replaceWith(el);
     });
 
-    // Chipy dni - przenoszenie dni miedzy grupami.
+    // Day chips - moving days between groups.
     this._body.querySelectorAll(".chip").forEach((el) => {
-      el.addEventListener("click", () => this._przelaczDzien(grupy[+el.dataset.g], el.dataset.d));
+      el.addEventListener("click", () => this._toggleDay(groups[+el.dataset.g], el.dataset.d));
     });
 
-    // Rozwijanie / zwijanie dnia.
-    this._body.querySelectorAll(".naglowek-dnia").forEach((el) => {
+    // Expanding / collapsing a day.
+    this._body.querySelectorAll(".day-toggle").forEach((el) => {
       el.addEventListener("click", () => {
         const gi = +el.dataset.g;
-        const g = grupy[gi];
-        const otwarty = g.dni.some((d) => this._rozwiniete.has(d));
-        for (const d of g.dni) {
-          if (otwarty) this._rozwiniete.delete(d);
-          else this._rozwiniete.add(d);
+        const g = groups[gi];
+        const open = g.days.some((d) => this._expanded.has(d));
+        for (const d of g.days) {
+          if (open) this._expanded.delete(d);
+          else this._expanded.add(d);
         }
-        // Bez pelnego _render(): przelaczamy klase na istniejacym DOM,
-        // dzieki czemu przejscie CSS ma stan poczatkowy i koncowy do animacji.
-        const grupaEl = this._body.querySelector(`.grupa[data-g="${gi}"]`);
-        if (grupaEl) grupaEl.classList.toggle("otwarty", !otwarty);
-        el.setAttribute("aria-expanded", String(!otwarty));
+        // No full _render(): toggle the class on the existing DOM, so the CSS
+        // transition has a start and end state to animate.
+        const groupEl = this._body.querySelector(`.group[data-g="${gi}"]`);
+        if (groupEl) groupEl.classList.toggle("open", !open);
+        el.setAttribute("aria-expanded", String(!open));
       });
     });
 
-    // Kopiowanie bloków grupy do schowka i wklejanie ze schowka.
-    this._body.querySelectorAll(".slot-kopiuj").forEach((slot) => {
+    // Copying the group's blocks to the clipboard and pasting from it.
+    this._body.querySelectorAll(".slot-copy").forEach((slot) => {
       const gi = +slot.dataset.g;
-      const zrodlo = this._zrodloSchowka(grupy[gi]);
-      const el = ikonaHA("mdi:content-copy", "Kopiuj");
-      if (zrodlo) el.classList.add("aktywny");
-      el.addEventListener("click", () => this._kopiuj(grupy[gi]));
+      const isSource = this._isClipboardSource(groups[gi]);
+      const el = haIconButton("mdi:content-copy", "Kopiuj");
+      if (isSource) el.classList.add("active");
+      el.addEventListener("click", () => this._copy(groups[gi]));
       slot.replaceWith(el);
     });
-    this._body.querySelectorAll(".slot-wklej").forEach((slot) => {
+    this._body.querySelectorAll(".slot-paste").forEach((slot) => {
       const gi = +slot.dataset.g;
-      const el = ikonaHA("mdi:content-paste", "Wklej");
-      el.addEventListener("click", () => this._wklej(grupy[gi]));
-      slot.replaceWith(el);
-    });
-
-    // Dodawanie bloku.
-    this._body.querySelectorAll(".slot-dodaj").forEach((slot) => {
-      const gi = +slot.dataset.g;
-      const el = przyciskHA("Dodaj blok", { ikona: "mdi:plus" });
-      el.addEventListener("click", () => this._dodaj(grupy[gi]));
+      const el = haIconButton("mdi:content-paste", "Wklej");
+      el.addEventListener("click", () => this._paste(groups[gi]));
       slot.replaceWith(el);
     });
 
-    // Pasek zapisu narysowany od zera przy pelnym przerysowaniu nie wysuwa sie
-    // ponownie - animacja tylko gdy pojawia sie po raz pierwszy.
-    this._renderStopkaPoRysowaniu();
-    rozwin(this._body.querySelector(".wiersz.nowy"));
-    rozwin(this._body.querySelector(".grupa.nowa"));
-    this._nowy = null;
-    this._nowaGrupa = null;
+    // Adding a block.
+    this._body.querySelectorAll(".slot-add").forEach((slot) => {
+      const gi = +slot.dataset.g;
+      const el = haButton("Dodaj blok", { icon: "mdi:plus" });
+      el.addEventListener("click", () => this._add(groups[gi]));
+      slot.replaceWith(el);
+    });
+
+    // A save bar drawn from scratch on a full re-render does not slide in again -
+    // it animates only when it appears for the first time.
+    this._renderFooterAfterDraw();
+    expand(this._body.querySelector(".row.new"));
+    expand(this._body.querySelector(".group.new"));
+    this._newBlock = null;
+    this._newGroup = null;
   }
 }
 
