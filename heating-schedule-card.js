@@ -1,4 +1,4 @@
-/* heating-schedule-card - edit heating schedule temperatures with a slider.
+/* heating-schedule-card - edit the blocks of schedule helpers and a value stored in each.
    Reads and writes `schedule` helpers over the HA websocket. */
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
@@ -374,7 +374,6 @@ class HeatingScheduleCard extends HTMLElement {
       .filter((e) => e.startsWith("climate.") && this._area(e) === area);
   }
 
-  /* A value fitted to the slider range and step. */
   _fit(v) {
     const { min, max, step } = this._limits();
     return Math.min(max, Math.max(min, Math.round(Number(v) / step) * step));
@@ -734,10 +733,8 @@ class HeatingScheduleCard extends HTMLElement {
       await this._hass.callWS(msg);
       this._dirty = false;
       this._error = null;
-      // The flag is cleared before _load(), because that is what renders the card
-      // after saving - otherwise the footer stayed on "Zapisywanie…".
+      // Cleared before _load(), because _load() renders the card after saving.
       this._saving = false;
-      // A short confirmation, then the save bar hides.
       this._saved = true;
       await this._load();
       clearTimeout(this._savedTimer);
@@ -890,7 +887,6 @@ class HeatingScheduleCard extends HTMLElement {
     const title = this._config.title || this._data.name || this._scheduleId;
 
     const groups = this._groups();
-    // Standard ha-card header (size and font like other HA cards), without an icon.
     this._card.header = title;
     let html = `<div class="content">`;
 
@@ -912,7 +908,6 @@ class HeatingScheduleCard extends HTMLElement {
         </div>
         <div class="group-body"><div class="group-inner">`;
       if (this._config.group_days) {
-        // Day chips: which days use these blocks.
         const [short, full] = [this._t("days_short"), this._t("days_full")];
         html += `<div class="chips" role="group" aria-label="${this._t("days_with_blocks")}">${DAYS.map((k, d) => {
           const on = g.days.includes(k);
@@ -970,7 +965,6 @@ class HeatingScheduleCard extends HTMLElement {
       );
       slot.replaceWith(el);
     });
-    // Time fields - text, in the 12/24 h format from the HA profile.
     const h12 = uses12h(this._hass);
     const labels = { hour: this._t("hour"), minutes: this._t("minutes") };
     [["slot-from", "from"], ["slot-to", "to"]].forEach(([cls, field]) => {
@@ -982,7 +976,6 @@ class HeatingScheduleCard extends HTMLElement {
       });
     });
 
-    // Removing a block - ha-icon-button with a close icon.
     this._body.querySelectorAll(".slot-remove").forEach((slot) => {
       const gi = +slot.dataset.g, bi = +slot.dataset.b;
       const el = haIconButton("mdi:close", this._t("remove"));
@@ -997,12 +990,10 @@ class HeatingScheduleCard extends HTMLElement {
       slot.replaceWith(el);
     });
 
-    // Day chips - moving days between groups.
     this._body.querySelectorAll(".chip").forEach((el) => {
       el.addEventListener("click", () => this._toggleDay(groups[+el.dataset.g], el.dataset.d));
     });
 
-    // Expanding / collapsing a day.
     this._body.querySelectorAll(".day-toggle").forEach((el) => {
       el.addEventListener("click", () => {
         const gi = +el.dataset.g;
@@ -1020,7 +1011,6 @@ class HeatingScheduleCard extends HTMLElement {
       });
     });
 
-    // Copying the group's blocks to the clipboard and pasting from it.
     this._body.querySelectorAll(".slot-copy").forEach((slot) => {
       const gi = +slot.dataset.g;
       const isSource = this._isClipboardSource(groups[gi]);
@@ -1036,7 +1026,6 @@ class HeatingScheduleCard extends HTMLElement {
       slot.replaceWith(el);
     });
 
-    // Adding a block.
     this._body.querySelectorAll(".slot-add").forEach((slot) => {
       const gi = +slot.dataset.g;
       const el = haButton(this._t("add_block"), { icon: "mdi:plus" });
@@ -1044,8 +1033,6 @@ class HeatingScheduleCard extends HTMLElement {
       slot.replaceWith(el);
     });
 
-    // A save bar drawn from scratch on a full re-render does not slide in again -
-    // it animates only when it appears for the first time.
     this._renderFooterAfterDraw();
     expand(this._body.querySelector(".row.new"));
     expand(this._body.querySelector(".group.new"));
