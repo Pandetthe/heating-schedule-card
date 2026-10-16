@@ -223,6 +223,9 @@ function setClipboard(value) {
   for (const c of cards) c._render();
 }
 
+/* Options renamed when the card was published; the old names keep working. */
+const LEGACY_OPTIONS = { grupuj_dni: "group_days", termostat: "thermostat" };
+
 class HeatingScheduleCard extends HTMLElement {
   connectedCallback() {
     cards.add(this);
@@ -237,9 +240,11 @@ class HeatingScheduleCard extends HTMLElement {
     if (!config || !config.entity || !config.entity.startsWith("schedule.")) {
       throw new Error("Wymagane: entity wskazujące na encję schedule.*");
     }
+    const options = {};
+    for (const [key, value] of Object.entries(config)) options[LEGACY_OPTIONS[key] || key] = value;
     // min/max/step default to the room's thermostats (see _limits); the config
     // can override them.
-    this._config = { unit: "°C", grupuj_dni: false, ...config };
+    this._config = { data_key: "temperature", unit: "°C", default_value: 21, group_days: false, ...options };
     this._scheduleId = config.entity.split(".")[1];
     this._data = null;       // { name, icon, days: {day: [blocks]} }
     this._dirty = false;
@@ -263,17 +268,33 @@ class HeatingScheduleCard extends HTMLElement {
     return this._data ? 3 + Object.keys(this._data.days).length * 2 : 4;
   }
 
-  static getStubConfig() {
-    return { entity: "schedule.grzanie_salon" };
+  static getStubConfig(hass) {
+    const entity = Object.keys(hass?.states || {}).find((e) => e.startsWith("schedule.")) || "schedule.heating";
+    return { entity };
   }
 
-  /* Room thermostats: `termostat` from the config (entity or list), otherwise
-     every climate.<room>_* for schedule.grzanie_<room>. */
+  /* Area of an entity: its own, otherwise its device's. */
+  _area(entityId) {
+    const h = this._hass || {};
+    const e = h.entities?.[entityId];
+    return e?.area_id || (e?.device_id && h.devices?.[e.device_id]?.area_id) || null;
+  }
+
+  /* Room thermostats: `thermostat` from the config (entity or list), otherwise
+     every climate entity in the schedule's area. */
   _thermostats() {
-    const t = this._config.termostat;
+    const t = this._config.thermostat;
     if (t) return Array.isArray(t) ? t : [t];
-    const room = this._scheduleId.replace(/^grzanie_/, "");
-    return Object.keys(this._hass.states).filter((e) => e.startsWith(`climate.${room}_`));
+    const area = this._area(this._config.entity);
+    if (!area) return [];
+    return Object.keys(this._hass.states)
+      .filter((e) => e.startsWith("climate.") && this._area(e) === area);
+  }
+
+  /* A value fitted to the slider range and step. */
+  _fit(v) {
+    const { min, max, step } = this._limits();
+    return Math.min(max, Math.max(min, Math.round(Number(v) / step) * step));
   }
 
   /* Slider range like the thermostat's: with several valves the intersection of
@@ -304,8 +325,9 @@ class HeatingScheduleCard extends HTMLElement {
         days[key] = (s[key] || []).map((b) => ({
           from: hhmm(b.from),
           to: hhmm(b.to),
-          temp: Number((b.data || {}).temperatura ?? this._limits().min),
-          missingTemp: (b.data || {}).temperatura === undefined || (b.data || {}).temperatura === "",
+          value: Number((b.data || {})[this._config.data_key] ?? this._limits().min),
+          // Other keys in the block's data are kept and saved back untouched.
+          data: { ...(b.data || {}) },
         }));
       }
       this._data = { name: s.name, icon: s.icon, days };
@@ -318,15 +340,15 @@ class HeatingScheduleCard extends HTMLElement {
     this._render();
   }
 
-  /* Group layout computed on load: with grupuj_dni:true every day with identical
+  /* Group layout computed on load: with group_days:true every day with identical
      blocks goes into one group (also non-adjacent ones, e.g. mon, tue, thu, fri
      + wed separately). After that the layout is editing state - changing blocks
      does not reshuffle groups mid-edit; days move between groups with chips
      (_toggleDay). */
   _initialLayout() {
-    if (!this._config.grupuj_dni) return DAYS.map(([k]) => [k]);
+    if (!this._config.group_days) return DAYS.map(([k]) => [k]);
     const sig = (d) =>
-      JSON.stringify(this._data.days[d].map((b) => [b.from, b.to, b.temp]));
+      JSON.stringify(this._data.days[d].map((b) => [b.from, b.to, b.value]));
     const bySig = new Map();
     for (const [k] of DAYS) {
       const s = sig(k);
@@ -341,7 +363,7 @@ class HeatingScheduleCard extends HTMLElement {
   _signature() {
     return JSON.stringify(DAYS.map(([k]) => [...this._data.days[k]]
       .sort((a, b) => toMinutes(a.from) - toMinutes(b.from))
-      .map((b) => [b.from, b.to, Number(b.temp)])));
+      .map((b) => [b.from, b.to, Number(b.value)])));
   }
 
   _groups() {
@@ -352,7 +374,7 @@ class HeatingScheduleCard extends HTMLElement {
       .map((days) => ({
         days,
         short: days.map((k) => DAYS[index(k)][1]),
-        full: this._config.grupuj_dni ? null : DAYS[index(days[0])][2],
+        full: this._config.group_days ? null : DAYS[index(days[0])][2],
       }));
   }
 
@@ -387,7 +409,7 @@ class HeatingScheduleCard extends HTMLElement {
       source.splice(source.indexOf(day), 1);
       if (!source.length) this._layout.splice(this._layout.indexOf(source), 1);
       this._layout.find((u) => u.includes(group.days[0])).push(day);
-      this._data.days[day] = this._data.days[group.days[0]].map((b) => ({ ...b }));
+      this._data.days[day] = this._data.days[group.days[0]].map((b) => ({ ...b, data: { ...b.data } }));
       this._dirty = true;
     }
     // Both groups (old and new) stay expanded so the effect is visible.
@@ -418,7 +440,6 @@ class HeatingScheduleCard extends HTMLElement {
       const block = this._data.days[d][idx];
       if (!block) continue;
       block[field] = value;
-      if (field === "temp") block.missingTemp = false;
     }
     // A value change (temperature, time) does not change the card layout - no
     // DOM rebuild: only day summaries, errors and the save bar. Nothing jumps
@@ -509,7 +530,7 @@ class HeatingScheduleCard extends HTMLElement {
     const fmt = numberFormatter(this._hass);
     const { unit } = this._config;
     const blocks = this._data.days[g.days[0]];
-    const t = blocks.map((b) => Number(b.temp));
+    const t = blocks.map((b) => Number(b.value));
     const n = blocks.length;
     const count = n === 0 ? "brak bloków" : n === 1 ? "1 blok" : n < 5 ? `${n} bloki` : `${n} bloków`;
     if (!n) return count;
@@ -562,7 +583,7 @@ class HeatingScheduleCard extends HTMLElement {
       `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
     const [start, end] = gap;
     for (const d of group.days) {
-      this._data.days[d].push({ from: fmt(start), to: fmt(end), temp: 21, missingTemp: false });
+      this._data.days[d].push({ from: fmt(start), to: fmt(end), value: this._fit(this._config.default_value), data: {} });
       this._data.days[d].sort((a, b) => toMinutes(a.from) - toMinutes(b.from));
     }
     // Remember which row is new, to highlight it with an enter animation.
@@ -578,17 +599,15 @@ class HeatingScheduleCard extends HTMLElement {
       name: this._roomName(),
       label: this._label(group),
       days: [...group.days],
-      blocks: this._data.days[group.days[0]].map((b) => ({ ...b })),
+      blocks: this._data.days[group.days[0]].map((b) => ({ ...b, data: { ...b.data } })),
     });
   }
 
   /* Name for the clipboard description: the schedule's area in HA (Living room,
      Bathroom...), because the schedules themselves share one name ("Heating"). */
   _roomName() {
-    const h = this._hass || {};
-    const e = h.entities?.[this._config.entity];
-    const area = e?.area_id || (e?.device_id && h.devices?.[e.device_id]?.area_id);
-    return (area && h.areas?.[area]?.name) || this._data.name || this._scheduleId;
+    const area = this._area(this._config.entity);
+    return (area && this._hass?.areas?.[area]?.name) || this._data.name || this._scheduleId;
   }
 
   _isClipboardSource(group) {
@@ -597,13 +616,11 @@ class HeatingScheduleCard extends HTMLElement {
   }
 
   /* Pastes the clipboard blocks into every day of the group (replacing its blocks).
-     Temperatures are fitted to the range and step of this room's thermostats. */
+     Values are fitted to the range and step of this card's slider. */
   _paste(group) {
     if (!clipboard) return;
-    const { min, max, step } = this._limits();
-    const fit = (v) => Math.min(max, Math.max(min, Math.round(Number(v) / step) * step));
     for (const d of group.days) {
-      this._data.days[d] = clipboard.blocks.map((b) => ({ ...b, temp: fit(b.temp), missingTemp: false }));
+      this._data.days[d] = clipboard.blocks.map((b) => ({ ...b, data: { ...b.data }, value: this._fit(b.value) }));
     }
     for (const d of group.days) this._expanded.add(d);
     this._render();
@@ -626,7 +643,7 @@ class HeatingScheduleCard extends HTMLElement {
           .map((b) => ({
             from: withSeconds(b.from),
             to: withSeconds(b.to),
-            data: { temperatura: Number(b.temp) },
+            data: { ...b.data, [this._config.data_key]: Number(b.value) },
           }));
       }
       await this._hass.callWS(msg);
@@ -809,7 +826,7 @@ class HeatingScheduleCard extends HTMLElement {
           <span class="slot-copy" data-g="${gi}"></span>
         </div>
         <div class="group-body"><div class="group-inner">`;
-      if (this._config.grupuj_dni) {
+      if (this._config.group_days) {
         // Day chips: which days use these blocks.
         html += `<div class="chips" role="group" aria-label="Dni z tymi blokami">${DAYS.map(([k, short, full]) => {
           const on = g.days.includes(k);
@@ -828,7 +845,7 @@ class HeatingScheduleCard extends HTMLElement {
           <span class="slot-from" data-g="${gi}" data-b="${bi}"></span>
           <span class="slot-to" data-g="${gi}" data-b="${bi}"></span>
           <span class="slot-slider" data-g="${gi}" data-b="${bi}"></span>
-          <span class="val">${fmt(b.temp)} ${unit}</span>
+          <span class="val">${fmt(b.value)} ${unit}</span>
           <span class="slot-remove" data-g="${gi}" data-b="${bi}"></span>
         </div>`;
       });
@@ -856,14 +873,14 @@ class HeatingScheduleCard extends HTMLElement {
         el = document.createElement("input");
         el.type = "range";
       }
-      el.min = min; el.max = max; el.step = step; el.value = block.temp;
+      el.min = min; el.max = max; el.step = step; el.value = block.value;
       const read = (ev) => Number(ev.target.value ?? el.value);
       el.addEventListener("input", (ev) => {
         const v = slot.parentElement.querySelector(".val");
         if (v) v.textContent = `${fmt(read(ev))} ${unit}`;
       });
       el.addEventListener("change", (ev) =>
-        this._change(groups[gi], bi, "temp", read(ev))
+        this._change(groups[gi], bi, "value", read(ev))
       );
       slot.replaceWith(el);
     });
