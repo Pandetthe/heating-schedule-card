@@ -10,6 +10,7 @@
       "Bash(git branch *)",
       "Bash(scripts/check.sh)",
       "Bash(./scripts/check.sh)",
+      "Bash(npm test)",
       "Bash(scripts/spec_metadata.sh)",
       "Bash(./scripts/spec_metadata.sh)"
     ]

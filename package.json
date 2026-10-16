@@ -1,0 +1,12 @@
+{
+  "name": "heating-schedule-card",
+  "private": true,
+  "type": "module",
+  "description": "Development tooling only; the card itself has no dependencies.",
+  "scripts": {
+    "test": "node --test 'tests/*.test.mjs'"
+  },
+  "devDependencies": {
+    "jsdom": "24.1.3"
+  }
+}

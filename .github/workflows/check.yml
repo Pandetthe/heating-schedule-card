@@ -8,6 +8,7 @@ on:
       - "tests/**"
       - "scripts/**"
       - "*.json"
+      - "package-lock.json"
       - ".github/workflows/check.yml"
   pull_request:
     branches: ["main"]
@@ -25,5 +26,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: "npm"
       - name: Run scripts/check.sh
         run: scripts/check.sh

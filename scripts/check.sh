@@ -8,6 +8,5 @@ cd "$ROOT"
 print_header "heating-schedule-card" "Checks"
 run_silent "Syntax" "node --check heating-schedule-card.js"
 run_silent "JSON"   "for f in \$(git ls-files '*.json'); do node -e 'JSON.parse(require(\"fs\").readFileSync(process.argv[1], \"utf8\"))' \"\$f\" || exit 1; done"
-if [ -d tests ]; then
-    run_silent "Tests" "node --test tests/"
-fi
+[ -d node_modules ] || run_silent "Install" "npm ci --no-fund --no-audit"
+run_silent "Tests"  "npm test"
